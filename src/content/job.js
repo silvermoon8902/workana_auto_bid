@@ -19,7 +19,26 @@
     return textOf(document.body);
   }
 
+  // Map a flag CSS class (flag-br) to a country name.
+  function countryFromFlag() {
+    const el = document.querySelector(".wk-user-info .flag, .block-cta ~ article .flag, .flag");
+    const m = el && el.className.match(/flag-([a-z]{2})/i);
+    const code = m ? m[1].toLowerCase() : "";
+    const map = {
+      br: "Brazil", pt: "Portugal", ar: "Argentina", mx: "Mexico", co: "Colombia",
+      cl: "Chile", pe: "Peru", es: "Spain", ve: "Venezuela", ec: "Ecuador", uy: "Uruguay",
+      bo: "Bolivia", py: "Paraguay", gt: "Guatemala", do: "Dominican Republic", hn: "Honduras",
+      sv: "El Salvador", ni: "Nicaragua", cr: "Costa Rica", pa: "Panama", cu: "Cuba",
+      us: "United States",
+    };
+    return map[code] || "";
+  }
+
   function getDescription() {
+    // The real description lives in the inline-expander block.
+    const exp = document.querySelector(".block-detail .expander, .expander[inline-expander]");
+    if (exp && textOf(exp).length > 60) return textOf(exp).slice(0, 4000);
+
     const heading = qa("h1,h2,h3,h4,strong,div,span").find((e) =>
       /about this project|sobre (el|o) proyecto|sobre o projeto|descripción/i.test(textOf(e))
     );
@@ -38,31 +57,45 @@
   }
 
   function getClientPanel() {
-    const body = getBodyText();
-    // Numbers may appear BEFORE the label ("4 Published projects") on the detail
-    // page, or AFTER it ("Published: 3 / Payments: 2") on the bid page.
-    const pick = (patterns) => {
-      for (const p of patterns) {
-        const m = body.match(p);
-        if (m) return Number(m[1]);
-      }
-      return 0;
-    };
-    const publishedCount = pick([
-      /(\d+)\s*Published projects/i,
-      /Published projects?\D{0,6}(\d+)/i,
-      /Published:\s*(\d+)/i,
-    ]);
-    const paidCount = pick([
-      /(\d+)\s*Projects paid/i,
-      /Projects paid\D{0,6}(\d+)/i,
-      /Payments?:\s*(\d+)/i,
-    ]);
+    // Preferred: the structured .item-data blocks (number in <p class="h4">, label below).
+    const items = qa(".item-data");
+    let publishedCount = 0,
+      paidCount = 0;
+    for (const it of items) {
+      const t = textOf(it);
+      const n = Number(textOf(it.querySelector(".h4")) || (t.match(/\d+/) || [])[0] || 0);
+      if (/Published projects/i.test(t)) publishedCount = n;
+      else if (/Projects paid/i.test(t)) paidCount = n;
+    }
+    // Fallback to body-text parsing (bid page / other layouts).
+    if (!publishedCount && !paidCount) {
+      const body = getBodyText();
+      const pick = (ps) => {
+        for (const p of ps) {
+          const m = body.match(p);
+          if (m) return Number(m[1]);
+        }
+        return 0;
+      };
+      publishedCount = pick([/(\d+)\s*Published projects/i, /Published projects?\D{0,6}(\d+)/i, /Published:\s*(\d+)/i]);
+      paidCount = pick([/(\d+)\s*Projects paid/i, /Projects paid\D{0,6}(\d+)/i, /Payments?:\s*(\d+)/i]);
+    }
+
     const clientName =
-      textOf(qa("[class*='client'] [class*='name'], [class*='author']")[0]) || "";
+      textOf(qa(".wk-user-info .user-name, [class*='client'] [class*='name'], [class*='author']")[0]) || "";
     const country =
-      (body.match(/\b(Brazil|Brasil|Argentina|Mexico|México|Colombia|Chile|Peru|Perú|Spain|España|Venezuela|Ecuador|Uruguay|Bolivia|Paraguay|Portugal|United States|USA)\b/i) || [])[0] || "";
-    return { publishedCount, paidCount, clientName, country };
+      countryFromFlag() ||
+      (getBodyText().match(
+        /\b(Brazil|Brasil|Argentina|Mexico|México|Colombia|Chile|Peru|Perú|Spain|España|Venezuela|Ecuador|Uruguay|Bolivia|Paraguay|Portugal|United States|USA)\b/i
+      ) || [])[0] ||
+      "";
+
+    // "Other projects posted by <client>" — used for the cross-language scam check.
+    const priorPostingTitles = qa(".client-projects li a strong, .client-projects li strong")
+      .map((e) => textOf(e))
+      .filter(Boolean);
+
+    return { publishedCount, paidCount, clientName, country, priorPostingTitles };
   }
 
   // Read the Insights "Average rate" from /job/insight/<slug> WITHOUT navigating.
@@ -99,51 +132,80 @@
 
     if (!resp || resp.action === "skip" || resp.action === "abort") return; // background closes the tab
 
-    // action === "bid" → open the bid form.
+    // action === "bid" → open the bid form (direct link is most reliable).
     await humanDelay();
-    const clicked = await clickByText(S.placeBidText, { timeout: 6000 });
-    if (!clicked) {
-      await send({ type: "BID_DONE", slug, success: false, error: "Place-a-bid button not found" });
+    const bidBtn =
+      document.querySelector("#bid_button") || document.querySelector("a[href*='/messages/bid/']");
+    if (bidBtn) {
+      bidBtn.click();
+    } else {
+      const clicked = await clickByText(S.placeBidText, { timeout: 6000 });
+      if (!clicked) await send({ type: "BID_DONE", slug, success: false, error: "Place-a-bid button not found" });
     }
     // Navigation to /messages/bid/<slug> triggers job.js again in bid-form mode.
   }
 
   // ---------- Phase B: bid form ----------
+  // A chip is already selected if its label or its hidden checkbox says so.
+  function chipSelected(chip) {
+    if (chip.classList.contains("selected")) return true;
+    const input = chip.querySelector("input");
+    return !!input && (input.checked || input.classList.contains("selected"));
+  }
+
   async function selectSkills(want = []) {
-    // 1) Tick existing candidate chips that match.
+    const wants = want.map((w) => (w || "").toLowerCase().trim()).filter(Boolean);
     const chips = qa(S.skillChip).filter((c) => c.offsetParent !== null);
-    let chosen = 0;
-    const lc = (s) => s.toLowerCase();
+
+    // Workana pre-selects the direct matches. Count them; if already 5, leave as-is.
+    let selected = chips.filter(chipSelected).length;
+    if (selected >= 5) return selected;
+
+    // 1) Top up with UNSELECTED chips matching Claude's suggested skills
+    //    (never click a selected chip — that would deselect it).
     for (const chip of chips) {
-      if (chosen >= 5) break;
-      const label = lc(textOf(chip));
-      if (want.some((w) => lc(w) && label.includes(lc(w)))) {
+      if (selected >= 5) break;
+      if (chipSelected(chip)) continue;
+      const label = textOf(chip).toLowerCase();
+      if (wants.some((w) => label.includes(w) || w.includes(label))) {
         chip.click();
-        chosen++;
-        await sleep(150);
+        selected++;
+        await sleep(200);
       }
     }
-    // 2) If fewer than 5, search-add from Claude's suggestions.
-    if (chosen < 5) {
+
+    // 1b) Still under 5 → fill with any remaining unselected chips (reach 5).
+    if (selected < 5) {
+      for (const chip of chips) {
+        if (selected >= 5) break;
+        if (chipSelected(chip)) continue;
+        chip.click();
+        selected++;
+        await sleep(200);
+      }
+    }
+
+    // 2) Still under 5 (not enough chips) → use the "Search skills" box to add more.
+    if (selected < 5) {
       const input = document.querySelector(S.skillSearchInput);
       if (input) {
-        for (const w of want) {
-          if (chosen >= 5) break;
+        for (const w of wants) {
+          if (selected >= 5) break;
           setReactValue(input, w);
           await humanDelay(500, 900);
           const opt = await waitForText(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), {
-            selector: "li,[role='option'],div",
+            selector: "li,[role='option'],label,div",
             timeout: 1500,
           });
           if (opt) {
             opt.click();
-            chosen++;
+            selected++;
             await sleep(200);
           }
         }
       }
     }
-    return chosen;
+    return selected;
   }
 
   // Score a portfolio card by title match + skill overlap with the proposal.

@@ -240,6 +240,12 @@ async function handle(msg, sender) {
           postingLang = await detectLanguage(cfg, data.postingText);
         } catch {}
       }
+      // Languages of the client's OTHER postings — a PT/ES client with an
+      // English posting is the fake-review scam pattern.
+      const priorPostingLangs = (data.priorPostingTitles || [])
+        .map((t) => guessLanguage(t))
+        .filter((l) => l && l !== "unknown");
+
       const verdict = assessClient({
         clientName: data.clientName,
         country: data.country,
@@ -247,6 +253,7 @@ async function handle(msg, sender) {
         paidCount: data.paidCount,
         postingText: data.postingText,
         postingLang,
+        priorPostingLangs,
       });
       if (verdict.flagged) {
         await addScammer({ clientName: data.clientName || slug, slug, reasons: verdict.reasons });

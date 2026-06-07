@@ -135,9 +135,10 @@
     insightsTabText: /project insights|insights del proyecto|insights do projeto/i,
     askQuestionText: /ask a question|make questions|hacer preguntas|fazer perguntas/i,
 
-    // Bid form fields
-    skillChip: "[class*='skill'] [class*='chip'], [class*='tag']",
-    skillSearchInput: "input[placeholder*='skill' i], input[placeholder*='habilidad' i], input[placeholder*='habilidade' i]",
+    // Bid form fields — "Highlight your skills" chips (verified DOM):
+    // <label class="skill ... like-chip selected"><input type=checkbox .../><span>PHP</span></label>
+    skillChip: ".display-selector label.skill, .skills-select label.skill, label.like-chip",
+    skillSearchInput: "input.multi-select-search-field, input[placeholder*='skill' i], input[placeholder*='habilidad' i], input[placeholder*='habilidade' i]",
     // "Highlight your projects" portfolio cards (verified DOM).
     portfolioCard: ".wk-portfolio-card",
     portfolioTitle: ".portfolio-card-title",
