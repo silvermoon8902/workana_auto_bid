@@ -192,17 +192,30 @@ async function handle(msg, sender) {
       };
     }
     case "SET_ENABLED": {
-      await setConfig({ enabled: !!msg.enabled });
+      const on = !!msg.enabled;
+      await setConfig({ enabled: on });
       await refreshAlarm();
-      if (msg.enabled) {
+      if (on) {
         // Immediately re-scan any jobs tabs already open (Start pressed after load).
         try {
           const tabs = await chrome.tabs.query({ url: "*://*.workana.com/jobs*" });
           for (const t of tabs) chrome.tabs.sendMessage(t.id, { type: "RESCAN" }).catch(() => {});
         } catch {}
         pump();
+      } else {
+        // HARD STOP: drop the queue and close the in-flight job tab so the
+        // current bid is NOT submitted. (Its slug stays unhandled and re-queues
+        // on the next Start.)
+        rt.queue = [];
+        if (rt.jobTabId != null) {
+          const id = rt.jobTabId;
+          rt.jobTabId = null;
+          rt.inFlightSlug = null;
+          chrome.tabs.remove(id).catch(() => {});
+        }
+        notify("info", "⏸ Paused — automation stopped");
       }
-      return { ok: true, enabled: !!msg.enabled };
+      return { ok: true, enabled: on };
     }
 
     // ---- auto-bid flow ----
@@ -251,6 +264,10 @@ async function handle(msg, sender) {
 
     case "JOB_DETAIL": {
       const { slug, data } = msg;
+      if (!cfg.enabled) {
+        finishInFlight();
+        return { action: "abort" }; // paused mid-flight — don't spend tokens or bid
+      }
       // Language of the posting (cheap guess; Claude fallback if unknown).
       let postingLang = guessLanguage(data.postingText);
       if (postingLang === "unknown" && isSpanishOrPortugueseCountry(data.country)) {
@@ -328,6 +345,7 @@ async function handle(msg, sender) {
     }
 
     case "GET_PROPOSAL": {
+      if (!cfg.enabled) return { proposal: null }; // paused — don't fill/submit
       const saved = await getProposal(msg.slug);
       if (!saved) return { proposal: null };
       return {
