@@ -96,6 +96,8 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
 
   let res;
   try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60000); // don't hang forever on a stalled proxy
     res = await fetch(API_URL, {
       method: "POST",
       headers: {
@@ -105,7 +107,9 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
         "anthropic-dangerous-direct-browser-access": "true",
       },
       body: JSON.stringify(body),
+      signal: ctrl.signal,
     });
+    clearTimeout(timer);
   } catch (netErr) {
     // Network blip — retry a couple times.
     if (attempt < 3) {

@@ -128,7 +128,13 @@
   // corrupts the flow — so we fetch it same-origin instead.)
   async function fetchInsightAverage() {
     try {
-      const res = await fetch(`https://www.workana.com/job/insight/${slug}`, { credentials: "include" });
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000); // never let this block the bid
+      const res = await fetch(`https://www.workana.com/job/insight/${slug}`, {
+        credentials: "include",
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
       if (!res.ok) return null;
       const text = (await res.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
       const m =
@@ -440,14 +446,27 @@
     }
     await reveal(submitEl);
     submitEl.click();
-    // SUCCESS path: the form redirects to /inbox/<slug> — the BACKGROUND detects
-    // that navigation and resolves the bid (this script is destroyed by the redirect,
-    // so we can't rely on sending BID_DONE here).
-    // FAILURE path: if we're STILL on the bid form after a few seconds, it was a
-    // validation error — report it so the queue advances.
-    await sleep(5000);
-    if (/\/messages\/bid\//i.test(location.pathname)) {
-      await send({ type: "BID_DONE", slug, success: false, error: "Submit did not redirect (validation error?)" });
+    // Detect the outcome OURSELVES — Workana submits either via a full redirect to
+    // /inbox OR via an in-app (SPA) route change; both LEAVE the bid form. Poll for
+    // either (a) the path no longer being /messages/bid, or (b) a success message.
+    // If a full navigation destroys this script first, the background's onUpdated
+    // handler resolves it instead (resolveBid is idempotent).
+    let resolved = false;
+    for (let i = 0; i < 12; i++) {
+      await sleep(1000);
+      if (!/\/messages\/bid\//i.test(location.pathname)) {
+        await send({ type: "BID_DONE", slug, success: true });
+        resolved = true;
+        break;
+      }
+      if (/sent successfully|enviada con [eé]xito|enviada com sucesso|proposta enviada|propuesta enviada/i.test(textOf(document.body))) {
+        await send({ type: "BID_DONE", slug, success: true });
+        resolved = true;
+        break;
+      }
+    }
+    if (!resolved) {
+      await send({ type: "BID_DONE", slug, success: false, error: "Submit did not complete (validation error?)" });
     }
   }
 
