@@ -94,6 +94,7 @@ async function pump() {
 
   rt.inFlightSlug = slug;
   await markJob(slug, "scanned");
+  console.debug("[WK bg] opening job tab:", slug);
   try {
     const tab = await chrome.tabs.create({
       url: `https://www.workana.com/job/${slug}`,
@@ -115,28 +116,39 @@ function finishInFlight() {
 }
 
 // ---------------- pricing ----------------
-function parseBudgetMidpoint(budgetStr) {
+function parseRange(budgetStr) {
   const nums = (budgetStr || "").replace(/[.,](?=\d{3}\b)/g, "").match(/\d+/g);
-  if (!nums) return null;
-  const vals = nums.map(Number);
-  return vals.length >= 2 ? (vals[0] + vals[1]) / 2 : vals[0];
+  if (!nums) return { low: null, high: null };
+  const v = nums.map(Number).filter((n) => n > 0);
+  if (!v.length) return { low: null, high: null };
+  return v.length >= 2 ? { low: v[0], high: v[1] } : { low: v[0], high: v[0] };
 }
 
 function computePrice(cfg, { avgPrice, budget }) {
-  const ref = avgPrice || parseBudgetMidpoint(budget);
-  let base = null;
+  const { low, high } = parseRange(budget);
+
+  // Trust the scraped Insights average only if it's sane vs. the posted budget;
+  // a mis-parse (e.g. 17000 on a 1k–3k job) would otherwise blow up the bid.
+  let avg = avgPrice;
+  if (avg && high && (avg > high * 3 || avg < (low || high) * 0.3)) avg = null;
+
+  // Reference: sane average, else midpoint of the budget.
+  let ref = avg || (low && high ? (low + high) / 2 : low || high);
+
+  // Tier override (range → fixed bid).
   if (ref != null) {
     const tier = (cfg.priceStrategy || []).find((t) => ref >= t.min && ref <= t.max);
-    if (tier) base = tier.bid;
+    if (tier) ref = tier.bid;
   }
-  if (base == null) base = ref; // no tier → use the reference
-  // Cap to underbid the average.
-  if (avgPrice) {
-    const cap = avgPrice * (1 - (cfg.underbidPct || 15) / 100);
-    base = base == null ? cap : Math.min(base, cap);
-  }
-  if (base == null) base = (cfg.priceStrategy?.[0]?.bid) || 0;
-  return Math.max(0, Math.round(base / 10) * 10);
+
+  // Underbid the reference by the configured percentage.
+  let price = ref != null ? ref * (1 - (cfg.underbidPct || 15) / 100) : (cfg.priceStrategy?.[0]?.bid || 0);
+
+  // Clamp into the posted budget range so we never bid absurd amounts.
+  if (high) price = Math.min(price, high);
+  if (low) price = Math.max(price, low);
+
+  return Math.max(0, Math.round(price / 10) * 10);
 }
 
 // ---------------- message bus ----------------
@@ -165,25 +177,56 @@ async function handle(msg, sender) {
     case "SET_ENABLED": {
       await setConfig({ enabled: !!msg.enabled });
       await refreshAlarm();
-      if (msg.enabled) pump();
+      if (msg.enabled) {
+        // Immediately re-scan any jobs tabs already open (Start pressed after load).
+        try {
+          const tabs = await chrome.tabs.query({ url: "*://*.workana.com/jobs*" });
+          for (const t of tabs) chrome.tabs.sendMessage(t.id, { type: "RESCAN" }).catch(() => {});
+        } catch {}
+        pump();
+      }
       return { ok: true, enabled: !!msg.enabled };
     }
 
     // ---- auto-bid flow ----
     case "JOBS_FOUND": {
       if (!cfg.enabled) return { ok: false };
+      let queued = 0,
+        preskipped = 0;
       for (const job of msg.jobs || []) {
         if (await isHandled(job.slug)) continue;
-        if (rt.queue.includes(job.slug)) continue;
-        if (rt.inFlightSlug === job.slug) continue;
+        if (rt.queue.includes(job.slug) || rt.inFlightSlug === job.slug) continue;
+
+        // Cheap pre-skip using the data already on the search card (avoids
+        // opening a tab for obvious non-payers). Full check still runs on the job page.
+        const postingLang = guessLanguage(job.snippet || "");
+        const verdict = assessClient({
+          clientName: job.clientName,
+          country: job.country,
+          publishedCount: job.publishedCount,
+          paidCount: job.paidCount,
+          postingText: job.snippet,
+          postingLang,
+        });
+        if (verdict.flagged) {
+          await addScammer({ clientName: job.clientName || job.slug, slug: job.slug, reasons: verdict.reasons });
+          await markJob(job.slug, "skipped-scammer", { reasons: verdict.reasons });
+          preskipped++;
+          continue;
+        }
+
         rt.queue.push(job.slug);
-        // Keep the search-scraped meta for pricing fallback.
         const meta = await getState("processedJobs");
         if (!meta[job.slug]) {
           meta[job.slug] = { status: "queued", ts: Date.now(), budget: job.budget, country: job.country };
           await setState("processedJobs", meta);
         }
+        queued++;
       }
+      console.debug(
+        "[WK bg] JOBS_FOUND in=%d queued+=%d preskip=%d total=%d",
+        (msg.jobs || []).length, queued, preskipped, rt.queue.length
+      );
       pump();
       return { ok: true, queued: rt.queue.length };
     }

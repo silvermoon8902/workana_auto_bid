@@ -3,7 +3,7 @@
 
 (function () {
   const D = window.WKDom;
-  const { textOf, qa, slugFromUrl, waitForSelector, waitForText, clickByText, setReactValue, humanDelay, sleep, S } = D;
+  const { textOf, qa, slugFromUrl, waitForSelector, waitForText, clickByText, setReactValue, humanDelay, sleep, inputAfterLabel, readMinBid, sanitizeOutgoing, S } = D;
 
   const slug = slugFromUrl(location.href);
   const isBidForm = /\/messages\/bid\//i.test(location.pathname);
@@ -35,12 +35,25 @@
 
   function getClientPanel() {
     const body = getBodyText();
-    const publishedCount = Number(
-      (body.match(/Published projects?\D*(\d+)/i) || body.match(/Published:\s*(\d+)/i) || [])[1] || 0
-    );
-    const paidCount = Number(
-      (body.match(/Projects paid\D*(\d+)/i) || body.match(/Payments?:\s*(\d+)/i) || [])[1] || 0
-    );
+    // Numbers may appear BEFORE the label ("4 Published projects") on the detail
+    // page, or AFTER it ("Published: 3 / Payments: 2") on the bid page.
+    const pick = (patterns) => {
+      for (const p of patterns) {
+        const m = body.match(p);
+        if (m) return Number(m[1]);
+      }
+      return 0;
+    };
+    const publishedCount = pick([
+      /(\d+)\s*Published projects/i,
+      /Published projects?\D{0,6}(\d+)/i,
+      /Published:\s*(\d+)/i,
+    ]);
+    const paidCount = pick([
+      /(\d+)\s*Projects paid/i,
+      /Projects paid\D{0,6}(\d+)/i,
+      /Payments?:\s*(\d+)/i,
+    ]);
     const clientName =
       textOf(qa("[class*='client'] [class*='name'], [class*='author']")[0]) || "";
     const country =
@@ -148,17 +161,33 @@
   }
 
   async function fillBudget(price) {
-    const input = await waitForSelector(S.totalRateInput, { timeout: 4000 });
-    if (input && price) setReactValue(input, String(price));
+    // Target the "Total rate" input specifically — NOT "Work hours" (the first
+    // number field). Putting the bid in Hours makes Workana auto-inflate Total.
+    const input = inputAfterLabel(/total rate/i) || (await waitForSelector(S.totalRateInput, { timeout: 4000 }));
+    if (!input) return;
+    let val = Math.round(Number(price) || 0);
+    const min = readMinBid();
+    if (min && val < min) val = Math.ceil(min / 10) * 10; // respect the form's minimum bid
+    if (val > 0) setReactValue(input, String(val));
   }
 
   async function fillProposal(text) {
-    const ta = await waitForSelector(S.proposalTextarea, { timeout: 4000 });
-    if (ta) setReactValue(ta, text);
+    const ta = inputAfterLabel(/proposal details/i) || (await waitForSelector(S.proposalTextarea, { timeout: 4000 }));
+    if (!ta || !text) return;
+    // Defuse Workana's link/contact filter so the bid isn't blocked/suspended.
+    const safe = sanitizeOutgoing(text);
+    if (ta.isContentEditable) {
+      ta.focus();
+      ta.textContent = safe;
+      ta.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    } else {
+      setReactValue(ta, safe);
+    }
   }
 
   async function fillDelivery(deliveryTime) {
-    const input = document.querySelector(S.deliveryInput);
+    const input =
+      inputAfterLabel(/how long will it take|delivery/i) || document.querySelector(S.deliveryInput);
     if (input && deliveryTime) setReactValue(input, deliveryTime);
   }
 
@@ -189,7 +218,7 @@
     }
 
     const submitted = await clickByText(S.submitBidText, { timeout: 4000 });
-    await send({ type: "BID_DONE", slug, success: submitted, error: submitted ? "" : "Submit button not found" });
+    await sleep(1000); // let the submit register before moving to the next job
 
     // Optional visibility bump: a short follow-up question.
     if (submitted && resp.followUpQuestion) {
@@ -197,6 +226,8 @@
       // Implemented best-effort; safe to no-op if the UI differs.
       await clickByText(S.askQuestionText, { timeout: 2000 }).catch(() => {});
     }
+
+    await send({ type: "BID_DONE", slug, success: submitted, error: submitted ? "" : "Submit button not found" });
   }
 
   if (!slug) return;

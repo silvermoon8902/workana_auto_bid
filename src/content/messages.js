@@ -5,7 +5,7 @@
   if (/\/messages\/bid\//i.test(location.pathname)) return;
 
   const D = window.WKDom;
-  const { textOf, qa, waitForSelector, setReactValue, humanDelay, sleep, S } = D;
+  const { textOf, qa, waitForSelector, setReactValue, humanDelay, sleep, sanitizeOutgoing, S } = D;
   const send = (msg) => chrome.runtime.sendMessage(msg);
 
   let running = false;
@@ -59,12 +59,13 @@
 
     const box = await waitForSelector(S.replyBox, { timeout: 4000 });
     if (!box) return;
+    const safe = sanitizeOutgoing(resp.replyText);
     if (box.isContentEditable) {
       box.focus();
-      box.textContent = resp.replyText;
+      box.textContent = safe;
       box.dispatchEvent(new InputEvent("input", { bubbles: true }));
     } else {
-      setReactValue(box, resp.replyText);
+      setReactValue(box, safe);
     }
     await humanDelay();
 

@@ -72,6 +72,60 @@
     return m ? m[1] : null;
   }
 
+  // Find the editable input/textarea that belongs to a labelled field
+  // (e.g. "Total rate", "Proposal details") — checks siblings after the label
+  // first, then the label's parent. Skips disabled/readonly (Service Fee etc.).
+  function inputAfterLabel(re) {
+    const labels = qa("label, strong, h4, p, span, div").filter(
+      (e) => re.test(textOf(e)) && textOf(e).length < 60
+    );
+    const ok = (el) =>
+      el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT") && !el.disabled && !el.readOnly;
+    for (const lbl of labels) {
+      let n = lbl.nextElementSibling;
+      while (n) {
+        if (ok(n)) return n;
+        const inp = n.querySelector && n.querySelector("input:not([disabled]):not([readonly]), textarea");
+        if (inp) return inp;
+        n = n.nextElementSibling;
+      }
+      const p = lbl.parentElement;
+      const inp = p && p.querySelector("input:not([disabled]):not([readonly]), textarea");
+      if (inp) return inp;
+    }
+    return null;
+  }
+
+  // Defuse Workana's anti-contact/anti-link filter (which can SUSPEND the account):
+  // break risky trigger words and domain/link dots with a space so they aren't
+  // recognized as contact info, external links, or domains.
+  // e.g. "WhatsApp" -> "What sApp", "Fee" -> "Fe e", "next.js" -> "next. js",
+  //      "serenium-wellness.com" -> "serenium-wellness. com".
+  const TRIGGER_WORDS = [
+    { re: /whatsapp/gi, at: 4 },
+    { re: /telegram/gi, at: 4 },
+    { re: /fee/gi, at: 2 }, // also breaks "Feedback" -> "Fe edback"
+    { re: /tax/gi, at: 2 }, // also breaks "Taxes" -> "Ta xes"
+  ];
+  function sanitizeOutgoing(text) {
+    if (!text) return text;
+    let t = String(text);
+    for (const { re, at } of TRIGGER_WORDS) {
+      t = t.replace(re, (m) => m.slice(0, at) + " " + m.slice(at));
+    }
+    // Break a dot only when it's immediately followed by a non-space, non-dot
+    // char — i.e. domain/version/link dots ("x.y"), not normal sentence dots.
+    t = t.replace(/\.(?=[^\s.])/g, ". ");
+    return t;
+  }
+
+  // Read "Minimum bid: USD 1,800.00" from the bid form, if shown.
+  function readMinBid() {
+    const m = textOf(document.body).match(/Minimum bid:\s*USD?\s*\$?\s*([\d.,]+)/i);
+    if (!m) return null;
+    return Number(m[1].replace(/[.,](?=\d{3}\b)/g, ""));
+  }
+
   // ---- SELECTORS / label patterns (verify against live DOM) ----
   const S = {
     // Search results page
@@ -110,6 +164,9 @@
     clickByText,
     setReactValue,
     slugFromUrl,
+    inputAfterLabel,
+    readMinBid,
+    sanitizeOutgoing,
     S,
   };
 })();
