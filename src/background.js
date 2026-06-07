@@ -51,6 +51,23 @@ async function setBadge(on) {
   chrome.action.setBadgeBackgroundColor({ color: on ? "#16a34a" : "#9ca3af" });
 }
 
+// Show an in-page toast on the persistent search tab (or any open Workana tab),
+// so outcomes are visible even after the job tab that produced them has closed.
+async function notify(level, text) {
+  const payload = { type: "TOAST", level, text };
+  try {
+    if (rt.searchTabId != null) {
+      try {
+        await chrome.tabs.sendMessage(rt.searchTabId, payload);
+        return;
+      } catch {}
+    }
+    const tabs = await chrome.tabs.query({ url: "*://*.workana.com/*" });
+    const target = tabs.find((t) => /\/jobs/.test(t.url || "")) || tabs[0];
+    if (target) await chrome.tabs.sendMessage(target.id, payload).catch(() => {});
+  } catch {}
+}
+
 // Clear in-flight if its tab is closed out from under us.
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === rt.jobTabId) {
@@ -210,7 +227,8 @@ async function handle(msg, sender) {
         });
         if (verdict.flagged) {
           await addScammer({ clientName: job.clientName || job.slug, slug: job.slug, reasons: verdict.reasons });
-          await markJob(job.slug, "skipped-scammer", { reasons: verdict.reasons });
+          await markJob(job.slug, "skipped-scammer", { reasons: verdict.reasons, title: job.title });
+          notify("warn", `🚩 Scammer skipped: ${job.clientName || job.title || job.slug} — ${verdict.reasons[0]}`);
           preskipped++;
           continue;
         }
@@ -218,7 +236,7 @@ async function handle(msg, sender) {
         rt.queue.push(job.slug);
         const meta = await getState("processedJobs");
         if (!meta[job.slug]) {
-          meta[job.slug] = { status: "queued", ts: Date.now(), budget: job.budget, country: job.country };
+          meta[job.slug] = { status: "queued", ts: Date.now(), budget: job.budget, country: job.country, title: job.title };
           await setState("processedJobs", meta);
         }
         queued++;
@@ -258,6 +276,7 @@ async function handle(msg, sender) {
       if (verdict.flagged) {
         await addScammer({ clientName: data.clientName || slug, slug, reasons: verdict.reasons });
         await markJob(slug, "skipped-scammer", { reasons: verdict.reasons });
+        notify("warn", `🚩 Flagged: ${data.clientName || slug} — ${verdict.reasons[0]}`);
         finishInFlight();
         return { action: "skip", reasons: verdict.reasons };
       }
@@ -284,7 +303,25 @@ async function handle(msg, sender) {
         });
         return { action: "bid" };
       } catch (e) {
-        await markJob(slug, "error", { error: String(e) });
+        // Transient Claude failure (rate limit / overload / parse): retry the job
+        // once on a later pump instead of permanently abandoning + closing it.
+        console.error("[WK bg] proposal generation failed for", slug, e);
+        const processed = await getState("processedJobs");
+        const m = processed[slug] || {};
+        const attempts = (m.attempts || 0) + 1;
+        processed[slug] = {
+          ...m,
+          status: attempts < 2 ? "queued" : "error",
+          attempts,
+          error: String(e),
+          ts: Date.now(),
+        };
+        await setState("processedJobs", processed);
+        if (attempts < 2) rt.queue.push(slug);
+        notify(
+          attempts < 2 ? "warn" : "error",
+          `${attempts < 2 ? "↻ Proposal failed, will retry" : "⚠️ Proposal failed"}: ${m.title || slug}`
+        );
         finishInFlight();
         return { action: "abort", error: String(e) };
       }
@@ -309,8 +346,14 @@ async function handle(msg, sender) {
 
     case "BID_DONE": {
       const { slug, success, error, dryRun } = msg;
-      await markJob(slug, success ? "bid" : "error", { error: error || "", dryRun: !!dryRun });
+      const saved = await getProposal(slug);
+      const proc = (await getState("processedJobs"))[slug] || {};
+      const label = proc.title || (saved && saved.title) || slug;
+      await markJob(slug, success ? "bid" : "error", { error: error || "", dryRun: !!dryRun, title: proc.title });
       if (success && !dryRun) await recordBid();
+      if (success && dryRun) notify("info", `📝 Dry-run filled: ${label}${saved ? ` ($${saved.price})` : ""}`);
+      else if (success) notify("success", `✅ Bid submitted: ${label}${saved ? ` ($${saved.price})` : ""}`);
+      else notify("error", `⚠️ Bid failed: ${label}${error ? ` — ${error}` : ""}`);
       finishInFlight();
       return { ok: true };
     }
@@ -344,6 +387,7 @@ async function handle(msg, sender) {
           history: msg.chatHistory,
           lastRepliedTs: out.shouldEscalate ? 0 : Date.now(),
         });
+        if (out.shouldEscalate) notify("warn", `💬 Needs human reply: ${msg.jobTitle || msg.threadId}`);
         return { replyText: out.replyText, shouldEscalate: out.shouldEscalate, dryRun: cfg.dryRun };
       } catch (e) {
         return { skip: true, error: String(e) };
@@ -352,6 +396,7 @@ async function handle(msg, sender) {
 
     case "CHAT_SENT":
       await saveThread(msg.threadId, { lastRepliedTs: Date.now() });
+      notify("success", `💬 Replied to client (${msg.threadId})`);
       return { ok: true };
 
     default:

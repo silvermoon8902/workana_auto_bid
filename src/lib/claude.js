@@ -34,7 +34,10 @@ const LANG_SCHEMA = {
   additionalProperties: false,
 };
 
-async function callClaude(config, { system, user, schema, maxTokens = 2048 }) {
+const RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 529]);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function callClaude(config, { system, user, schema, maxTokens = 2048 }, attempt = 0) {
   if (!config.apiKey) throw new Error("Missing Anthropic API key");
   const body = {
     model: config.model || "claude-opus-4-8",
@@ -44,24 +47,49 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }) {
     messages: [{ role: "user", content: user }],
     output_config: { format: { type: "json_schema", schema } },
   };
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": config.apiKey,
-      "anthropic-version": ANTHROPIC_VERSION,
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify(body),
-  });
+
+  let res;
+  try {
+    res = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": config.apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (netErr) {
+    // Network blip — retry a couple times.
+    if (attempt < 3) {
+      await sleep(1000 * 2 ** attempt);
+      return callClaude(config, { system, user, schema, maxTokens }, attempt + 1);
+    }
+    throw netErr;
+  }
+
   if (!res.ok) {
     const text = await res.text();
+    if (RETRYABLE.has(res.status) && attempt < 3) {
+      const retryAfter = Number(res.headers.get("retry-after")) || 0;
+      await sleep(Math.max(retryAfter * 1000, 1000 * 2 ** attempt));
+      return callClaude(config, { system, user, schema, maxTokens }, attempt + 1);
+    }
     throw new Error(`Claude API ${res.status}: ${text.slice(0, 300)}`);
   }
+
   const data = await res.json();
   const textBlock = (data.content || []).find((b) => b.type === "text");
   if (!textBlock) throw new Error("Claude returned no text block");
-  return JSON.parse(textBlock.text);
+  try {
+    return JSON.parse(textBlock.text);
+  } catch {
+    // Structured output should be pure JSON, but salvage if anything wraps it.
+    const m = textBlock.text.match(/\{[\s\S]*\}/);
+    if (m) return JSON.parse(m[0]);
+    throw new Error("Claude response was not valid JSON");
+  }
 }
 
 export async function generateProposal(config, { description, clientName, country }) {

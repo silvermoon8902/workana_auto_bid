@@ -28,6 +28,11 @@
   },
   "content_scripts": [
     {
+      "matches": ["*://*.workana.com/*"],
+      "js": ["src/content/toast.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["*://*.workana.com/jobs*"],
       "js": ["src/content/dom-utils.js", "src/content/search.js"],
       "run_at": "document_idle"
