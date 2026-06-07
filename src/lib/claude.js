@@ -37,6 +37,51 @@ const LANG_SCHEMA = {
 const RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 529]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Robustly pull a JSON object out of a model response: handles pure JSON,
+// ```json fenced blocks, and JSON embedded in prose. Returns null if no COMPLETE
+// object is present (e.g. the output was truncated mid-object).
+function extractJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {}
+  const t = text.replace(/```(?:json)?/gi, "").trim();
+  try {
+    return JSON.parse(t);
+  } catch {}
+  const start = t.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0,
+    inStr = false,
+    esc = false;
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (c === "\\") {
+      esc = true;
+      continue;
+    }
+    if (c === '"') inStr = !inStr;
+    else if (!inStr) {
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(t.slice(start, i + 1));
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
+  }
+  return null; // unbalanced → truncated
+}
+
 async function callClaude(config, { system, user, schema, maxTokens = 2048 }, attempt = 0) {
   if (!config.apiKey) throw new Error("Missing Anthropic API key");
   const body = {
@@ -81,26 +126,23 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
   }
 
   const data = await res.json();
-  if (data.stop_reason === "max_tokens" && attempt < 2) {
-    // Truncated — retry with a bigger budget rather than failing JSON parse.
-    return callClaude(config, { system, user, schema, maxTokens: maxTokens * 2 }, attempt + 1);
-  }
   const textBlock = (data.content || []).find((b) => b.type === "text");
-  if (!textBlock) throw new Error("Claude returned no text block");
-  try {
-    return JSON.parse(textBlock.text);
-  } catch {
-    // Structured output should be pure JSON, but salvage if anything wraps it.
-    const m = textBlock.text.match(/\{[\s\S]*\}/);
-    if (m) return JSON.parse(m[0]);
-    throw new Error("Claude response was not valid JSON");
+  const parsed = extractJson(textBlock ? textBlock.text : "");
+  if (parsed) return parsed;
+
+  // No complete JSON — almost always truncation. Retry with a bigger budget.
+  if (attempt < 2) {
+    const next = (data.stop_reason === "max_tokens" ? maxTokens : Math.max(maxTokens, 4096)) * 2;
+    return callClaude(config, { system, user, schema, maxTokens: next }, attempt + 1);
   }
+  throw new Error("Claude response was not valid JSON");
 }
 
 export async function generateProposal(config, { description, clientName, country }) {
   const system =
     "You are an expert Workana freelancer writing winning bid proposals. " +
-    config.proposalPrompt;
+    config.proposalPrompt +
+    " Keep proposalText under ~180 words. Output ONLY a single valid JSON object matching the schema — no markdown fences, no text before or after.";
   const user = [
     `MY PROFILE:\n${config.profile}`,
     config.ranking ? `MY WORKANA RANKING: ${config.ranking}` : "",
@@ -121,7 +163,9 @@ export async function generateProposal(config, { description, clientName, countr
 
 export async function generateReply(config, { jobPosting, sentProposal, chatHistory, newMessage }) {
   const system =
-    "You are an expert Workana freelancer continuing a chat with a client. " + config.replyRules;
+    "You are an expert Workana freelancer continuing a chat with a client. " +
+    config.replyRules +
+    " Output ONLY a single valid JSON object matching the schema — no markdown fences, no text before or after.";
   const user = [
     `JOB POSTING:\n${jobPosting || "(unknown)"}`,
     `THE PROPOSAL I SENT:\n${sentProposal || "(unknown)"}`,
