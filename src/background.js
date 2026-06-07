@@ -179,7 +179,7 @@ async function pump() {
         console.warn("[WK bg] watchdog: forcing finish for", slug);
         resolveBid({ slug, success: false, error: "Timed out" });
       }
-    }, 90000);
+    }, 180000); // 3 min — safety net only; the full visible flow can take >90s
   } catch (e) {
     rt.jobTabId = null;
     rt.inFlightSlug = null;
