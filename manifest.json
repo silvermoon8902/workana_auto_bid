@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "Workana Auto-Bid & Auto-Reply",
+  "version": "0.1.0",
+  "description": "Autonomously refreshes a Workana job search, sends Claude-generated proposals, and auto-replies to client messages.",
+  "permissions": ["storage", "tabs", "scripting", "alarms"],
+  "host_permissions": [
+    "*://*.workana.com/*",
+    "https://api.anthropic.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "src/options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.workana.com/jobs*"],
+      "js": ["src/content/dom-utils.js", "src/content/search.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.workana.com/job/*",
+        "*://*.workana.com/messages/bid/*"
+      ],
+      "js": ["src/content/dom-utils.js", "src/content/job.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.workana.com/messages*"],
+      "js": ["src/content/dom-utils.js", "src/content/messages.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
