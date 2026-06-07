@@ -25,6 +25,7 @@ const rt = {
   inFlightSlug: null,
   queue: [], // slugs pending
 };
+let bidWatchdog = null; // safety timer so a stuck in-flight job can't freeze the queue
 
 // ---------------- lifecycle ----------------
 chrome.runtime.onInstalled.addListener(boot);
@@ -88,12 +89,46 @@ async function notify(level, text) {
 // Clear in-flight if its tab is closed out from under us.
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === rt.jobTabId) {
+    if (bidWatchdog) {
+      clearTimeout(bidWatchdog);
+      bidWatchdog = null;
+    }
     rt.jobTabId = null;
     rt.inFlightSlug = null;
     pump();
   }
   if (tabId === rt.searchTabId) rt.searchTabId = null;
 });
+
+// A successful submit redirects the bid form to /inbox/<slug>. Detect that here,
+// because the redirect destroys the content script before it can report BID_DONE.
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (tabId !== rt.jobTabId || !rt.inFlightSlug) return;
+  const url = info.url || (tab && tab.url) || "";
+  if (/workana\.com\/inbox\//i.test(url)) {
+    resolveBid({ slug: rt.inFlightSlug, success: true });
+  }
+});
+
+// Idempotent resolution of the current in-flight bid (called by the redirect
+// detector, the content-script BID_DONE, and the watchdog).
+async function resolveBid({ slug, success, dryRun, error }) {
+  const realSlug = slug || rt.inFlightSlug;
+  if (!realSlug || rt.inFlightSlug !== realSlug) return; // already resolved
+  if (bidWatchdog) {
+    clearTimeout(bidWatchdog);
+    bidWatchdog = null;
+  }
+  const saved = await getProposal(realSlug);
+  const proc = (await getState("processedJobs"))[realSlug] || {};
+  const label = proc.title || (saved && saved.title) || realSlug;
+  await markJob(realSlug, success ? "bid" : "error", { error: error || "", dryRun: !!dryRun, title: proc.title });
+  if (success && !dryRun) await recordBid();
+  if (success && dryRun) notify("info", `📝 Dry-run filled: ${label}${saved ? ` ($${saved.price})` : ""}`);
+  else if (success) notify("success", `✅ Bid submitted: ${label}${saved ? ` ($${saved.price})` : ""}`);
+  else notify("error", `⚠️ Bid failed: ${label}${error ? ` — ${error}` : ""}`);
+  finishInFlight();
+}
 
 // ---------------- polling: ensure the search tab is loaded ----------------
 async function poll() {
@@ -136,6 +171,15 @@ async function pump() {
     });
     rt.jobTabId = tab.id;
     if (cfg.focusTabs && tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    // Safety net: if the job neither bids nor errors within 2.5 min, force-resolve
+    // so a single stuck job can't freeze the whole queue.
+    if (bidWatchdog) clearTimeout(bidWatchdog);
+    bidWatchdog = setTimeout(() => {
+      if (rt.inFlightSlug === slug) {
+        console.warn("[WK bg] watchdog: forcing finish for", slug);
+        resolveBid({ slug, success: false, error: "Timed out" });
+      }
+    }, 150000);
   } catch (e) {
     rt.jobTabId = null;
     rt.inFlightSlug = null;
@@ -144,6 +188,10 @@ async function pump() {
 }
 
 function finishInFlight() {
+  if (bidWatchdog) {
+    clearTimeout(bidWatchdog);
+    bidWatchdog = null;
+  }
   if (rt.jobTabId !== null) chrome.tabs.remove(rt.jobTabId).catch(() => {});
   rt.jobTabId = null;
   rt.inFlightSlug = null;
@@ -459,16 +507,9 @@ async function handle(msg, sender) {
     }
 
     case "BID_DONE": {
-      const { slug, success, error, dryRun } = msg;
-      const saved = await getProposal(slug);
-      const proc = (await getState("processedJobs"))[slug] || {};
-      const label = proc.title || (saved && saved.title) || slug;
-      await markJob(slug, success ? "bid" : "error", { error: error || "", dryRun: !!dryRun, title: proc.title });
-      if (success && !dryRun) await recordBid();
-      if (success && dryRun) notify("info", `📝 Dry-run filled: ${label}${saved ? ` ($${saved.price})` : ""}`);
-      else if (success) notify("success", `✅ Bid submitted: ${label}${saved ? ` ($${saved.price})` : ""}`);
-      else notify("error", `⚠️ Bid failed: ${label}${error ? ` — ${error}` : ""}`);
-      finishInFlight();
+      // Real submits resolve via the /inbox redirect detector; this path mainly
+      // covers dry-run and "submit didn't redirect / button missing" cases.
+      await resolveBid({ slug: msg.slug, success: msg.success, dryRun: msg.dryRun, error: msg.error });
       return { ok: true };
     }
 

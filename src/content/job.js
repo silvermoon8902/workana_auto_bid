@@ -434,21 +434,21 @@
     const submitEl =
       (await waitForSelector(S.submitButton, { timeout: 4000 })) ||
       (await waitForText(S.submitBidText, { selector: "button,a", timeout: 1000 }));
-    let submitted = false;
-    if (submitEl) {
-      submitEl.click();
-      submitted = true;
+    if (!submitEl) {
+      await send({ type: "BID_DONE", slug, success: false, error: "Submit button not found" });
+      return;
     }
-    await sleep(1000); // let the submit register before moving to the next job
-
-    // Optional visibility bump: a short follow-up question.
-    if (submitted && resp.followUpQuestion) {
-      await humanDelay(1500, 3000);
-      // Implemented best-effort; safe to no-op if the UI differs.
-      await clickByText(S.askQuestionText, { timeout: 2000 }).catch(() => {});
+    await reveal(submitEl);
+    submitEl.click();
+    // SUCCESS path: the form redirects to /inbox/<slug> — the BACKGROUND detects
+    // that navigation and resolves the bid (this script is destroyed by the redirect,
+    // so we can't rely on sending BID_DONE here).
+    // FAILURE path: if we're STILL on the bid form after a few seconds, it was a
+    // validation error — report it so the queue advances.
+    await sleep(5000);
+    if (/\/messages\/bid\//i.test(location.pathname)) {
+      await send({ type: "BID_DONE", slug, success: false, error: "Submit did not redirect (validation error?)" });
     }
-
-    await send({ type: "BID_DONE", slug, success: submitted, error: submitted ? "" : "Submit button not found" });
   }
 
   if (!slug) return;
