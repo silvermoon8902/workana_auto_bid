@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Workana Auto-Bid</title>
+  <style>
+    body { font-family: system-ui, sans-serif; width: 300px; margin: 0; padding: 14px; color: #1f2937; }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    .status { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 12px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; }
+    .dot.on { background: #16a34a; }
+    button#toggle { width: 100%; padding: 11px; font-size: 15px; font-weight: 700; border: 0; border-radius: 10px; cursor: pointer; color: #fff; background: #16a34a; }
+    button#toggle.paused { background: #6d28d9; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0; }
+    .stat { background: #f5f5fb; border-radius: 8px; padding: 8px 10px; }
+    .stat b { display: block; font-size: 18px; }
+    .stat span { font-size: 11px; color: #6b7280; }
+    .scam h2 { font-size: 11px; text-transform: uppercase; color: #6b7280; margin: 6px 0; }
+    .scam ul { margin: 0; padding-left: 16px; max-height: 110px; overflow: auto; font-size: 12px; }
+    .footer { margin-top: 12px; font-size: 12px; }
+    .footer a { color: #6d28d9; cursor: pointer; }
+    .warn { font-size: 11px; color: #b45309; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Workana Auto-Bid &amp; Auto-Reply</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">Paused</span><span id="dry"></span></div>
+  <button id="toggle">Start</button>
+  <div class="stats">
+    <div class="stat"><b id="queue">0</b><span>Queued</span></div>
+    <div class="stat"><b id="bids">0</b><span>Bids this hour</span></div>
+    <div class="stat"><b id="processed">0</b><span>Jobs processed</span></div>
+    <div class="stat"><b id="scammers">0</b><span>Scammers skipped</span></div>
+  </div>
+  <div class="scam">
+    <h2>Recent scam-flagged clients</h2>
+    <ul id="scamList"><li style="list-style:none;color:#9ca3af">none yet</li></ul>
+  </div>
+  <div class="footer"><a id="openOptions">⚙ Settings</a></div>
+  <div class="warn" id="warn"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Workana Auto-Bid — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Workana Auto-Bid &amp; Auto-Reply</h1>
+    <div class="sub">Configure the automation. Use the toolbar popup to Start / Pause.</div>
+
+    <div class="card">
+      <h2>Claude API</h2>
+      <label>Anthropic API key</label>
+      <input type="password" id="apiKey" placeholder="sk-ant-..." />
+      <label>Model</label>
+      <input type="text" id="model" placeholder="claude-opus-4-8" />
+    </div>
+
+    <div class="card">
+      <h2>Your profile</h2>
+      <label>Profile / bio / skills / experience</label>
+      <textarea id="profile" placeholder="Full-stack dev, 8y, FastAPI + React..."></textarea>
+      <label>Workana ranking</label>
+      <input type="text" id="ranking" placeholder="Gold — global rank #1234" />
+    </div>
+
+    <div class="card">
+      <h2>Portfolio projects</h2>
+      <div class="hint">Used to highlight up to 3 in each bid and to ground the proposal.</div>
+      <div id="projects"></div>
+      <button class="add" id="addProject" type="button">+ Add project</button>
+    </div>
+
+    <div class="card">
+      <h2>Search &amp; prompts</h2>
+      <label>Main job search URL (saved search)</label>
+      <input type="text" id="searchUrl" placeholder="https://www.workana.com/jobs?..." />
+      <label>Proposal prompt</label>
+      <textarea id="proposalPrompt"></textarea>
+      <label>Auto-reply rules</label>
+      <textarea id="replyRules"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Price strategy</h2>
+      <div class="hint">For an average in [min, max], bid the given amount — then capped to underbid the average.</div>
+      <div id="tiers"></div>
+      <button class="add" id="addTier" type="button">+ Add tier</button>
+      <label>Underbid the Insights average by (%)</label>
+      <input type="number" id="underbidPct" min="0" max="90" />
+    </div>
+
+    <div class="card">
+      <h2>Automation</h2>
+      <label>Poll interval (minutes)</label>
+      <input type="number" id="pollMinutes" min="0.5" step="0.5" />
+      <label>Max bids per hour</label>
+      <input type="number" id="maxBidsPerHour" min="1" />
+      <div class="inline" style="margin-top:12px"><input type="checkbox" id="dryRun" /><label style="margin:0">Dry run (fill forms but never submit)</label></div>
+      <div class="inline" style="margin-top:8px"><input type="checkbox" id="followUpQuestion" /><label style="margin:0">Send a follow-up question after bidding</label></div>
+    </div>
+
+    <div class="bar">
+      <button class="primary" id="save" type="button">Save settings</button>
+      <span class="saved" id="savedMsg"></span>
+    </div>
+  </div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>
