@@ -138,8 +138,11 @@
     // Bid form fields
     skillChip: "[class*='skill'] [class*='chip'], [class*='tag']",
     skillSearchInput: "input[placeholder*='skill' i], input[placeholder*='habilidad' i], input[placeholder*='habilidade' i]",
-    portfolioCard: "[class*='portfolio'] [class*='card'], [class*='project-card']",
-    addProjectButton: "button, [role='button']", // the '+' on each portfolio card; resolved in job.js
+    // "Highlight your projects" portfolio cards (verified DOM).
+    portfolioCard: ".wk-portfolio-card",
+    portfolioTitle: ".portfolio-card-title",
+    portfolioSkill: ".skills .skill span",
+    portfolioSelect: "#selectPortfolio, label.btn-icon.pull-right, label.btn-icon", // the circle-plus SELECT label (NOT #openMoreSkill)
     totalRateInput: "input[placeholder*='USD' i], input[type='number']",
     proposalTextarea: "textarea",
     deliveryInput: "input[placeholder*='days' i], input[placeholder*='día' i], input[placeholder*='dias' i]",

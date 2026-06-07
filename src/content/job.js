@@ -5,6 +5,10 @@
   const D = window.WKDom;
   const { textOf, qa, slugFromUrl, waitForSelector, waitForText, clickByText, setReactValue, humanDelay, sleep, inputAfterLabel, readMinBid, sanitizeOutgoing, S } = D;
 
+  // The "Project Insights" tab lives at /job/insight/<slug> — never act there
+  // (navigating to it would re-run this script with a corrupt slug).
+  if (/\/job\/insight\//i.test(location.pathname)) return;
+
   const slug = slugFromUrl(location.href);
   const isBidForm = /\/messages\/bid\//i.test(location.pathname);
 
@@ -61,18 +65,20 @@
     return { publishedCount, paidCount, clientName, country };
   }
 
-  async function readInsightsAverage() {
+  // Read the Insights "Average rate" from /job/insight/<slug> WITHOUT navigating.
+  // (Clicking the "Project Insights" tab reloads this tab onto that route, which
+  // corrupts the flow — so we fetch it same-origin instead.)
+  async function fetchInsightAverage() {
     try {
-      const tab = await waitForText(S.insightsTabText, { selector: "button,a,[role='tab'],div", timeout: 4000 });
-      if (!tab) return null;
-      tab.click();
-      await humanDelay(900, 1600);
-      const node = await waitForText(/average/i, { selector: "*", timeout: 4000 });
-      const around = node ? textOf(node.parentElement || node) : "";
-      const m = around.match(/USD?\s?\$?\s?([\d.,]+)/i);
-      // Switch back to the Project tab so a later "Place a bid" is visible.
-      await clickByText(/^project$|^proyecto$|^projeto$/i, { timeout: 1500 });
-      return m ? Number(m[1].replace(/[.,](?=\d{3}\b)/g, "")) : null;
+      const res = await fetch(`https://www.workana.com/job/insight/${slug}`, { credentials: "include" });
+      if (!res.ok) return null;
+      const text = (await res.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+      const m =
+        text.match(/USD?\s*\$?\s*([\d.,]+)\s*Average rate/i) ||
+        text.match(/Average rate\D{0,12}USD?\s*\$?\s*([\d.,]+)/i);
+      const avg = m ? Number(m[1].replace(/[.,](?=\d{3}\b)/g, "")) : null;
+      console.debug("[WK job] insight average:", avg, "for", slug);
+      return avg;
     } catch {
       return null;
     }
@@ -83,7 +89,7 @@
     await humanDelay(900, 1700);
     const description = getDescription();
     const client = getClientPanel();
-    const avgPrice = await readInsightsAverage();
+    const avgPrice = await fetchInsightAverage();
 
     const resp = await send({
       type: "JOB_DETAIL",
@@ -140,24 +146,71 @@
     return chosen;
   }
 
-  async function selectProjects(wantTitles = []) {
-    const cards = qa(S.portfolioCard).filter((c) => c.offsetParent !== null);
-    let chosen = 0;
-    for (const card of cards) {
-      if (chosen >= 3) break;
-      const title = textOf(card).toLowerCase();
-      if (wantTitles.some((t) => t && title.includes(t.toLowerCase()))) {
-        const plus =
-          card.querySelector("button, [role='button'], [class*='add'], svg") ||
-          card.querySelector(S.addProjectButton);
-        if (plus) {
-          plus.click();
-          chosen++;
-          await sleep(200);
+  // Score a portfolio card by title match + skill overlap with the proposal.
+  function scoreCard(card, titles, skills) {
+    const title = textOf(card.querySelector(S.portfolioTitle)).toLowerCase();
+    if (!title) return { title: "", score: -1 };
+    const cardSkills = qa(S.portfolioSkill, card).map((s) => textOf(s).toLowerCase());
+    let score = 0;
+    if (titles.some((t) => t && (title.includes(t) || t.includes(title)))) score += 5;
+    score += cardSkills.filter((cs) => skills.some((s) => s && (cs.includes(s) || s.includes(cs)))).length;
+    return { title, score };
+  }
+
+  // Click the SELECT (circle-plus) label on the best-matching visible cards.
+  async function selectVisibleCards(titles, skills, picked) {
+    const ranked = qa(S.portfolioCard)
+      .filter((c) => c.offsetParent !== null)
+      .map((c) => ({ c, ...scoreCard(c, titles, skills) }))
+      .filter((x) => x.title && !picked.has(x.title) && x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    for (const { c, title } of ranked) {
+      if (picked.size >= 3) break;
+      const sel = c.querySelector(S.portfolioSelect);
+      if (sel) {
+        sel.click();
+        picked.add(title);
+        await sleep(300);
+      }
+    }
+  }
+
+  async function selectProjects(want) {
+    const titles = (want.titles || []).map((s) => (s || "").toLowerCase().trim()).filter(Boolean);
+    const skills = (want.skills || []).map((s) => (s || "").toLowerCase().trim()).filter(Boolean);
+    if (!titles.length && !skills.length) return 0;
+    const picked = new Set();
+
+    // 1) Pick from the inline cards.
+    await selectVisibleCards(titles, skills, picked);
+
+    // 2) Still need more relevant ones → open "Search portfolio" and page through.
+    if (picked.size < 3) {
+      const open =
+        document.querySelector("#portfolioOpenBidDialog") ||
+        (await waitForText(/search portfolio|buscar portfolio/i, { selector: "button,a", timeout: 1500 }));
+      if (open) {
+        open.click();
+        await humanDelay(900, 1600);
+        for (let i = 0; i < 4 && picked.size < 3; i++) {
+          await selectVisibleCards(titles, skills, picked);
+          if (picked.size >= 3) break;
+          const more = await waitForText(/see more|ver más|ver mais/i, { selector: "button,a", timeout: 1500 });
+          if (!more) break;
+          more.click();
+          await humanDelay(900, 1600);
+        }
+        // Confirm inside the dialog if it has a confirm button (scoped to the modal).
+        const modal = document.querySelector("[role='dialog'], .modal, .wk-modal, .modal-dialog");
+        if (modal) {
+          const btn = qa("button,a", modal).find((b) =>
+            /^(select|add|confirm|done|choose|seleccionar|adicionar|confirmar|listo)$/i.test(textOf(b))
+          );
+          if (btn) btn.click();
         }
       }
     }
-    return chosen;
+    return picked.size;
   }
 
   async function fillBudget(price) {
@@ -202,7 +255,7 @@
 
     await selectSkills(p.skills || []);
     await humanDelay();
-    await selectProjects(p.projects || []);
+    await selectProjects({ titles: p.projects || [], skills: p.skills || [] });
     await humanDelay();
     await fillBudget(resp.price);
     await humanDelay();
