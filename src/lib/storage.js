@@ -28,6 +28,7 @@ export const DEFAULT_CONFIG = {
   followUpQuestion: true, // send a short question after bidding to bump visibility
   attachScreenshots: true, // screenshot portfolio URLs Claude returns and attach them
   maxAttachments: 2, // cap how many screenshots to capture/attach per bid
+  focusTabs: true, // open each job tab focused + scroll it (watch the automation)
 };
 
 const STATE_KEYS = {

@@ -50,6 +50,7 @@ async function load() {
   $("followUpQuestion").checked = c.followUpQuestion;
   $("attachScreenshots").checked = c.attachScreenshots;
   $("maxAttachments").value = c.maxAttachments;
+  $("focusTabs").checked = c.focusTabs;
 
   const proj = $("projects");
   proj.innerHTML = "";
@@ -92,6 +93,7 @@ async function save() {
     followUpQuestion: $("followUpQuestion").checked,
     attachScreenshots: $("attachScreenshots").checked,
     maxAttachments: Number($("maxAttachments").value) || 0,
+    focusTabs: $("focusTabs").checked,
     projects,
     priceStrategy,
   });

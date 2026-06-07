@@ -14,6 +14,31 @@
 
   const send = (msg) => chrome.runtime.sendMessage(msg);
 
+  // Scroll the whole page top→bottom→top so the user can watch, and so Workana's
+  // lazy-loaded sections (portfolio cards, insights, etc.) render before we read them.
+  async function autoScroll() {
+    try {
+      const stepY = Math.max(300, Math.floor(window.innerHeight * 0.85));
+      const maxY = () => Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      for (let y = 0; y < maxY(); y += stepY) {
+        window.scrollTo({ top: y, behavior: "smooth" });
+        await sleep(220 + Math.random() * 200);
+      }
+      await sleep(300);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      await sleep(300);
+    } catch {}
+  }
+
+  // Scroll an element into view and pause briefly (shows progress while filling).
+  async function reveal(el) {
+    if (!el) return;
+    try {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      await sleep(350);
+    } catch {}
+  }
+
   // ---------- shared scraping ----------
   function getBodyText() {
     return textOf(document.body);
@@ -120,6 +145,7 @@
   // ---------- Phase A: job detail ----------
   async function runDetail() {
     await humanDelay(900, 1700);
+    await autoScroll(); // show activity + load lazy sections before scraping
     const description = getDescription();
     const client = getClientPanel();
     const avgPrice = await fetchInsightAverage();
@@ -304,6 +330,7 @@
     const input =
       document.querySelector(S.totalRateInput) || inputAfterLabel(/total rate/i) || (await waitForSelector(S.totalRateInput, { timeout: 4000 }));
     if (!input) return;
+    await reveal(input);
     let val = Math.round(Number(price) || 0);
     const min = readMinBid();
     if (min && val < min) val = Math.ceil(min); // respect the form's minimum bid
@@ -314,6 +341,7 @@
     const ta =
       document.querySelector(S.proposalTextarea) || inputAfterLabel(/proposal details/i) || (await waitForSelector(S.proposalTextarea, { timeout: 4000 }));
     if (!ta || !text) return;
+    await reveal(ta);
     // Defuse Workana's link/contact filter so the bid isn't blocked/suspended.
     const safe = sanitizeOutgoing(text);
     if (ta.isContentEditable) {
@@ -364,11 +392,15 @@
   async function fillDelivery(deliveryTime) {
     const input =
       document.querySelector(S.deliveryInput) || inputAfterLabel(/how long will it take|delivery/i);
-    if (input && deliveryTime) setReactValue(input, deliveryTime);
+    if (input && deliveryTime) {
+      await reveal(input);
+      setReactValue(input, deliveryTime);
+    }
   }
 
   async function runBidForm() {
     await humanDelay(900, 1700);
+    await autoScroll(); // render the portfolio cards / budget / proposal sections
     const resp = await send({ type: "GET_PROPOSAL", slug });
     if (!resp || !resp.proposal) {
       await send({ type: "BID_DONE", slug, success: false, error: "No proposal available" });

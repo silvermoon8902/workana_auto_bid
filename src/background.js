@@ -132,9 +132,10 @@ async function pump() {
   try {
     const tab = await chrome.tabs.create({
       url: `https://www.workana.com/job/${slug}`,
-      active: false,
+      active: !!cfg.focusTabs, // focus it so you can watch the automation
     });
     rt.jobTabId = tab.id;
+    if (cfg.focusTabs && tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
   } catch (e) {
     rt.jobTabId = null;
     rt.inFlightSlug = null;
