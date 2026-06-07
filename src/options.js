@@ -48,6 +48,8 @@ async function load() {
   $("maxBidsPerHour").value = c.maxBidsPerHour;
   $("dryRun").checked = c.dryRun;
   $("followUpQuestion").checked = c.followUpQuestion;
+  $("attachScreenshots").checked = c.attachScreenshots;
+  $("maxAttachments").value = c.maxAttachments;
 
   const proj = $("projects");
   proj.innerHTML = "";
@@ -88,6 +90,8 @@ async function save() {
     maxBidsPerHour: Number($("maxBidsPerHour").value) || 10,
     dryRun: $("dryRun").checked,
     followUpQuestion: $("followUpQuestion").checked,
+    attachScreenshots: $("attachScreenshots").checked,
+    maxAttachments: Number($("maxAttachments").value) || 0,
     projects,
     priceStrategy,
   });

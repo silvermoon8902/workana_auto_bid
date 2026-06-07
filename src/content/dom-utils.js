@@ -119,9 +119,14 @@
     return t;
   }
 
-  // Read "Minimum bid: USD 1,800.00" from the bid form, if shown.
+  // Read the minimum bid — prefer the input's own min attribute, else the text.
   function readMinBid() {
-    const m = textOf(document.body).match(/Minimum bid:\s*USD?\s*\$?\s*([\d.,]+)/i);
+    const amt = document.querySelector("#Amount, input[name='bid[amount]']");
+    if (amt) {
+      const n = Number(amt.getAttribute("min"));
+      if (n > 0) return n;
+    }
+    const m = textOf(document.body).match(/Minimum bid[^0-9]*USD?\s*\$?\s*([\d.,]+)/i);
     if (!m) return null;
     return Number(m[1].replace(/[.,](?=\d{3}\b)/g, ""));
   }
@@ -144,9 +149,13 @@
     portfolioTitle: ".portfolio-card-title",
     portfolioSkill: ".skills .skill span",
     portfolioSelect: "#selectPortfolio, label.btn-icon.pull-right, label.btn-icon", // the circle-plus SELECT label (NOT #openMoreSkill)
-    totalRateInput: "input[placeholder*='USD' i], input[type='number']",
-    proposalTextarea: "textarea",
-    deliveryInput: "input[placeholder*='days' i], input[placeholder*='día' i], input[placeholder*='dias' i]",
+    // Bid form (verified IDs). Total rate is #Amount (NOT #Hours).
+    totalRateInput: "#Amount, input[name='bid[amount]']",
+    hoursInput: "#Hours, input[name='bid[hours]']",
+    proposalTextarea: "#BidContent, textarea[name='bid[content]'], textarea",
+    deliveryInput: "#BidDeliveryTime, input[name='bid[deliveryTime]'], input[placeholder*='days' i], input[placeholder*='dias' i]",
+    // Submit is an <input type=submit value=Submit> — has NO text, so click by selector.
+    submitButton: ".wk-submit-block input[type='submit'], input[type='submit'][value], button[type='submit']",
     submitBidText: /^submit$|^enviar$|^send$/i,
 
     // Messages / chat

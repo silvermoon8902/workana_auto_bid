@@ -157,8 +157,24 @@
     const wants = want.map((w) => (w || "").toLowerCase().trim()).filter(Boolean);
     const chips = qa(S.skillChip).filter((c) => c.offsetParent !== null);
 
-    // Workana pre-selects the direct matches. Count them; if already 5, leave as-is.
+    // Workana pre-selects the direct matches. Count them.
     let selected = chips.filter(chipSelected).length;
+
+    // If MORE than 5 are pre-selected (over the "up to 5" limit), trim the
+    // least-relevant extras so the form is valid for submit.
+    if (selected > 5) {
+      const ranked = chips
+        .filter(chipSelected)
+        .map((c) => ({ c, rel: wants.some((w) => textOf(c).toLowerCase().includes(w)) ? 1 : 0 }))
+        .sort((a, b) => a.rel - b.rel); // least-relevant first
+      for (const { c } of ranked) {
+        if (selected <= 5) break;
+        c.click(); // deselect
+        selected--;
+        await sleep(150);
+      }
+      return selected;
+    }
     if (selected >= 5) return selected;
 
     // 1) Top up with UNSELECTED chips matching Claude's suggested skills
@@ -262,13 +278,20 @@
           more.click();
           await humanDelay(900, 1600);
         }
-        // Confirm inside the dialog if it has a confirm button (scoped to the modal).
-        const modal = document.querySelector("[role='dialog'], .modal, .wk-modal, .modal-dialog");
+        // Confirm the modal selection with its footer "Add project" button
+        // (a.btn-success in .modal-footer) — NOT the inline #portfolioOpenAddNew.
+        const modal = document.querySelector(".modal-dialog, [role='dialog'], .modal, .wk-modal, .modal-content");
         if (modal) {
-          const btn = qa("button,a", modal).find((b) =>
-            /^(select|add|confirm|done|choose|seleccionar|adicionar|confirmar|listo)$/i.test(textOf(b))
-          );
-          if (btn) btn.click();
+          const footer = modal.querySelector(".modal-footer") || modal;
+          const btn =
+            footer.querySelector("a.btn-success, .btn-success") ||
+            qa("a,button", footer).find((b) =>
+              /add project|adicionar projeto|agregar proyecto|añadir proyecto|confirmar|^done$|^listo$/i.test(textOf(b))
+            );
+          if (btn) {
+            btn.click();
+            await humanDelay(700, 1200);
+          }
         }
       }
     }
@@ -276,18 +299,20 @@
   }
 
   async function fillBudget(price) {
-    // Target the "Total rate" input specifically — NOT "Work hours" (the first
-    // number field). Putting the bid in Hours makes Workana auto-inflate Total.
-    const input = inputAfterLabel(/total rate/i) || (await waitForSelector(S.totalRateInput, { timeout: 4000 }));
+    // #Amount = Total rate (NOT #Hours). Putting the bid in Hours makes Workana
+    // auto-inflate the total.
+    const input =
+      document.querySelector(S.totalRateInput) || inputAfterLabel(/total rate/i) || (await waitForSelector(S.totalRateInput, { timeout: 4000 }));
     if (!input) return;
     let val = Math.round(Number(price) || 0);
     const min = readMinBid();
-    if (min && val < min) val = Math.ceil(min / 10) * 10; // respect the form's minimum bid
+    if (min && val < min) val = Math.ceil(min); // respect the form's minimum bid
     if (val > 0) setReactValue(input, String(val));
   }
 
   async function fillProposal(text) {
-    const ta = inputAfterLabel(/proposal details/i) || (await waitForSelector(S.proposalTextarea, { timeout: 4000 }));
+    const ta =
+      document.querySelector(S.proposalTextarea) || inputAfterLabel(/proposal details/i) || (await waitForSelector(S.proposalTextarea, { timeout: 4000 }));
     if (!ta || !text) return;
     // Defuse Workana's link/contact filter so the bid isn't blocked/suspended.
     const safe = sanitizeOutgoing(text);
@@ -300,9 +325,45 @@
     }
   }
 
+  function dataUrlToFile(dataUrl, filename) {
+    const [meta, b64] = dataUrl.split(",");
+    const mime = (meta.match(/data:(.*?);/) || [, "image/png"])[1];
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], filename, { type: mime });
+  }
+
+  // Ask the background to screenshot the portfolio URLs, then upload each image
+  // into the bid form's file input (#AttachmentUpload).
+  async function attachScreenshots(urls, max) {
+    const list = (urls || []).filter(Boolean).slice(0, max || 2);
+    if (!list.length) return 0;
+    const input = document.querySelector("#AttachmentUpload, input[type='file'][name='message.attachments'], input[type='file']");
+    if (!input) return 0;
+
+    const resp = await send({ type: "CAPTURE", urls: list });
+    const shots = (resp && resp.shots) || [];
+    let n = 0;
+    for (const shot of shots) {
+      try {
+        const file = dataUrlToFile(shot.dataUrl, shot.filename || `portfolio-${n + 1}.png`);
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        n++;
+        await humanDelay(1800, 2800); // let the inline upload finish before the next
+      } catch (e) {
+        console.warn("[WK job] attach failed", e);
+      }
+    }
+    return n;
+  }
+
   async function fillDelivery(deliveryTime) {
     const input =
-      inputAfterLabel(/how long will it take|delivery/i) || document.querySelector(S.deliveryInput);
+      document.querySelector(S.deliveryInput) || inputAfterLabel(/how long will it take|delivery/i);
     if (input && deliveryTime) setReactValue(input, deliveryTime);
   }
 
@@ -326,13 +387,26 @@
     await fillDelivery(p.deliveryTime);
     await humanDelay();
 
+    if (resp.attachScreenshots) {
+      await attachScreenshots(p.attachments || [], resp.maxAttachments);
+      await humanDelay();
+    }
+
     if (resp.dryRun) {
       console.log("[Workana auto-bid] DRY RUN — form filled, not submitting.", { slug, price: resp.price });
       await send({ type: "BID_DONE", slug, success: true, dryRun: true });
       return;
     }
 
-    const submitted = await clickByText(S.submitBidText, { timeout: 4000 });
+    // Submit is an <input type=submit> (no text) — click by selector, not text.
+    const submitEl =
+      (await waitForSelector(S.submitButton, { timeout: 4000 })) ||
+      (await waitForText(S.submitBidText, { selector: "button,a", timeout: 1000 }));
+    let submitted = false;
+    if (submitEl) {
+      submitEl.click();
+      submitted = true;
+    }
     await sleep(1000); // let the submit register before moving to the next job
 
     // Optional visibility bump: a short follow-up question.

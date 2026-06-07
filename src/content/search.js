@@ -28,10 +28,10 @@
     const seen = new Set();
     const cards = qa(".project-item, .js-project");
     for (const card of cards) {
-      const a = card.querySelector("a[href*='/job/']");
+      const a = card.querySelector("a[href*='/job/']:not([href*='/job/insight/'])");
       if (!a) continue;
       const slug = slugFromUrl(a.href);
-      if (!slug || seen.has(slug)) continue;
+      if (!slug || slug === "insight" || seen.has(slug)) continue; // never the insights sub-route
       seen.add(slug);
 
       const title = textOf(a);

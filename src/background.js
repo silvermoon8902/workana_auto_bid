@@ -27,8 +27,25 @@ const rt = {
 };
 
 // ---------------- lifecycle ----------------
-chrome.runtime.onInstalled.addListener(refreshAlarm);
-chrome.runtime.onStartup.addListener(refreshAlarm);
+chrome.runtime.onInstalled.addListener(boot);
+chrome.runtime.onStartup.addListener(boot);
+
+async function boot() {
+  await cleanupBogus();
+  await refreshAlarm();
+}
+
+// Remove bogus "insight" records created by the old insights-tab navigation.
+async function cleanupBogus() {
+  const scam = await getState("scammerList");
+  const f = scam.filter((x) => x.slug !== "insight" && x.clientName !== "insight");
+  if (f.length !== scam.length) await setState("scammerList", f);
+  const proc = await getState("processedJobs");
+  if (proc.insight) {
+    delete proc.insight;
+    await setState("processedJobs", proc);
+  }
+}
 
 async function refreshAlarm() {
   const cfg = await getConfig();
@@ -132,6 +149,38 @@ function finishInFlight() {
   setTimeout(pump, 1200);
 }
 
+// ---------------- screenshots (Phase 2 attachments) ----------------
+function waitTabComplete(tabId, timeout = 15000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () =>
+      chrome.tabs.get(tabId, (t) => {
+        if (chrome.runtime.lastError) return resolve();
+        if (t.status === "complete" || Date.now() - start > timeout) return resolve();
+        setTimeout(check, 300);
+      });
+    check();
+  });
+}
+
+// Open a URL in a temporary popup window, screenshot it, close it, restore focus.
+async function captureUrl(url) {
+  let prev;
+  try {
+    prev = (await chrome.windows.getLastFocused()).id;
+  } catch {}
+  const win = await chrome.windows.create({ url, focused: true, type: "popup", width: 1280, height: 900 });
+  const tabId = win.tabs && win.tabs[0] && win.tabs[0].id;
+  try {
+    if (tabId) await waitTabComplete(tabId);
+    await new Promise((r) => setTimeout(r, 1500)); // let it render
+    return await chrome.tabs.captureVisibleTab(win.id, { format: "png" });
+  } finally {
+    chrome.windows.remove(win.id).catch(() => {});
+    if (prev != null) chrome.windows.update(prev, { focused: true }).catch(() => {});
+  }
+}
+
 // ---------------- pricing ----------------
 function parseRange(budgetStr) {
   const nums = (budgetStr || "").replace(/[.,](?=\d{3}\b)/g, "").match(/\d+/g);
@@ -178,6 +227,30 @@ async function handle(msg, sender) {
   const cfg = await getConfig();
   switch (msg.type) {
     // ---- popup/options control ----
+    case "RESET_STATE": {
+      // Clear all accumulated state so every job is re-evaluated from scratch.
+      rt.queue = [];
+      if (rt.jobTabId != null) {
+        const id = rt.jobTabId;
+        rt.jobTabId = null;
+        rt.inFlightSlug = null;
+        chrome.tabs.remove(id).catch(() => {});
+      }
+      await setState("processedJobs", {});
+      await setState("scammerList", []);
+      await setState("proposals", {});
+      await setState("threads", {});
+      await setState("stats", { bidsThisHour: 0, hourStart: 0 });
+      notify("info", "♻️ State reset — all jobs will be re-evaluated");
+      if (cfg.enabled) {
+        try {
+          const tabs = await chrome.tabs.query({ url: "*://*.workana.com/jobs*" });
+          for (const t of tabs) chrome.tabs.sendMessage(t.id, { type: "RESCAN" }).catch(() => {});
+        } catch {}
+      }
+      return { ok: true };
+    }
+
     case "GET_STATUS": {
       const [processed, scammerList] = [await getState("processedJobs"), await getState("scammerList")];
       const stats = await getState("stats");
@@ -224,6 +297,7 @@ async function handle(msg, sender) {
       let queued = 0,
         preskipped = 0;
       for (const job of msg.jobs || []) {
+        if (!job.slug || job.slug === "insight") continue;
         if (await isHandled(job.slug)) continue;
         if (rt.queue.includes(job.slug) || rt.inFlightSlug === job.slug) continue;
 
@@ -264,6 +338,10 @@ async function handle(msg, sender) {
 
     case "JOB_DETAIL": {
       const { slug, data } = msg;
+      if (!slug || slug === "insight") {
+        finishInFlight();
+        return { action: "abort" };
+      }
       if (!cfg.enabled) {
         finishInFlight();
         return { action: "abort" }; // paused mid-flight — don't spend tokens or bid
@@ -359,7 +437,24 @@ async function handle(msg, sender) {
         price: saved.price,
         dryRun: cfg.dryRun,
         followUpQuestion: cfg.followUpQuestion,
+        attachScreenshots: cfg.attachScreenshots,
+        maxAttachments: cfg.maxAttachments,
       };
+    }
+
+    case "CAPTURE": {
+      if (!cfg.enabled || !cfg.attachScreenshots) return { shots: [] };
+      const urls = (msg.urls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, cfg.maxAttachments || 2);
+      const shots = [];
+      for (let i = 0; i < urls.length; i++) {
+        try {
+          const dataUrl = await captureUrl(urls[i]);
+          if (dataUrl) shots.push({ dataUrl, filename: `portfolio-${i + 1}.png` });
+        } catch (e) {
+          console.warn("[WK bg] capture failed", urls[i], e);
+        }
+      }
+      return { shots };
     }
 
     case "BID_DONE": {

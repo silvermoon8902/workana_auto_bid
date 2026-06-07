@@ -42,7 +42,8 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
   const body = {
     model: config.model || "claude-opus-4-8",
     max_tokens: maxTokens,
-    thinking: { type: "adaptive" },
+    // No thinking: output_config already forces pure JSON, and thinking tokens
+    // would eat into max_tokens and TRUNCATE the JSON (→ "not valid JSON").
     system,
     messages: [{ role: "user", content: user }],
     output_config: { format: { type: "json_schema", schema } },
@@ -80,6 +81,10 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
   }
 
   const data = await res.json();
+  if (data.stop_reason === "max_tokens" && attempt < 2) {
+    // Truncated — retry with a bigger budget rather than failing JSON parse.
+    return callClaude(config, { system, user, schema, maxTokens: maxTokens * 2 }, attempt + 1);
+  }
   const textBlock = (data.content || []).find((b) => b.type === "text");
   if (!textBlock) throw new Error("Claude returned no text block");
   try {
@@ -111,7 +116,7 @@ export async function generateProposal(config, { description, clientName, countr
   ]
     .filter(Boolean)
     .join("\n\n");
-  return callClaude(config, { system, user, schema: PROPOSAL_SCHEMA });
+  return callClaude(config, { system, user, schema: PROPOSAL_SCHEMA, maxTokens: 4096 });
 }
 
 export async function generateReply(config, { jobPosting, sentProposal, chatHistory, newMessage }) {

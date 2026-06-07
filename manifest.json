@@ -6,7 +6,8 @@
   "permissions": ["storage", "tabs", "scripting", "alarms"],
   "host_permissions": [
     "*://*.workana.com/*",
-    "https://api.anthropic.com/*"
+    "https://api.anthropic.com/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "src/background.js",

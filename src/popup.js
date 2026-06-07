@@ -42,6 +42,11 @@ $("toggle").onclick = async () => {
   refresh();
 };
 $("openOptions").onclick = () => chrome.runtime.openOptionsPage();
+$("resetState").onclick = async () => {
+  if (!confirm("Reset all state? This clears processed jobs, scammer list, saved proposals and chat history so everything is re-evaluated.")) return;
+  await chrome.runtime.sendMessage({ type: "RESET_STATE" });
+  refresh();
+};
 
 refresh();
 setInterval(refresh, 2000);

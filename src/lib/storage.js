@@ -26,6 +26,8 @@ export const DEFAULT_CONFIG = {
   enabled: false, // master Start/Pause flag
   dryRun: false, // when true: fill the form but do NOT submit
   followUpQuestion: true, // send a short question after bidding to bump visibility
+  attachScreenshots: true, // screenshot portfolio URLs Claude returns and attach them
+  maxAttachments: 2, // cap how many screenshots to capture/attach per bid
 };
 
 const STATE_KEYS = {
