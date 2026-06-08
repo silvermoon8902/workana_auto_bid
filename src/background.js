@@ -69,20 +69,17 @@ async function setBadge(on) {
   chrome.action.setBadgeBackgroundColor({ color: on ? "#16a34a" : "#9ca3af" });
 }
 
-// Show an in-page toast on the persistent search tab (or any open Workana tab),
-// so outcomes are visible even after the job tab that produced them has closed.
+// Broadcast an in-page toast to EVERY open Workana tab (so the one you're looking
+// at — including the focused job tab — shows it), and persist it to a popup log.
 async function notify(level, text) {
-  const payload = { type: "TOAST", level, text };
   try {
-    if (rt.searchTabId != null) {
-      try {
-        await chrome.tabs.sendMessage(rt.searchTabId, payload);
-        return;
-      } catch {}
-    }
+    const events = await getState("recentEvents");
+    events.unshift({ level, text, ts: Date.now() });
+    await setState("recentEvents", events.slice(0, 30));
+  } catch {}
+  try {
     const tabs = await chrome.tabs.query({ url: "*://*.workana.com/*" });
-    const target = tabs.find((t) => /\/jobs/.test(t.url || "")) || tabs[0];
-    if (target) await chrome.tabs.sendMessage(target.id, payload).catch(() => {});
+    for (const t of tabs) chrome.tabs.sendMessage(t.id, { type: "TOAST", level, text }).catch(() => {});
   } catch {}
 }
 
@@ -290,6 +287,7 @@ async function handle(msg, sender) {
       await setState("proposals", {});
       await setState("threads", {});
       await setState("stats", { bidsThisHour: 0, hourStart: 0 });
+      await setState("recentEvents", []);
       notify("info", "♻️ State reset — all jobs will be re-evaluated");
       if (cfg.enabled) {
         try {
@@ -311,6 +309,7 @@ async function handle(msg, sender) {
         scammerList: scammerList.slice(0, 25),
         processedCount: Object.keys(processed).length,
         bidsThisHour: stats.bidsThisHour,
+        recentEvents: await getState("recentEvents"),
       };
     }
     case "SET_ENABLED": {

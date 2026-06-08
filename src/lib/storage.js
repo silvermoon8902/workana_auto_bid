@@ -37,6 +37,7 @@ const STATE_KEYS = {
   proposals: {}, // { [slug]: { title, description, proposal, price, skills, projects, ts } }
   threads: {}, // { [threadId]: { jobSlug, history[], lastRepliedTs } }
   stats: { bidsThisHour: 0, hourStart: 0 },
+  recentEvents: [], // [{ level, text, ts }] — activity log shown in the popup
 };
 
 export async function getConfig() {
