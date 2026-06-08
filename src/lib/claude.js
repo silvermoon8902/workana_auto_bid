@@ -97,7 +97,7 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
   let res;
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60000); // don't hang forever on a stalled proxy
+    const timer = setTimeout(() => ctrl.abort(), 40000); // don't hang forever on a stalled proxy
     res = await fetch(API_URL, {
       method: "POST",
       headers: {
@@ -111,8 +111,8 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
     });
     clearTimeout(timer);
   } catch (netErr) {
-    // Network blip — retry a couple times.
-    if (attempt < 3) {
+    // Network blip / timeout — retry once (keeps total time bounded).
+    if (attempt < 2) {
       await sleep(1000 * 2 ** attempt);
       return callClaude(config, { system, user, schema, maxTokens }, attempt + 1);
     }
@@ -121,7 +121,7 @@ async function callClaude(config, { system, user, schema, maxTokens = 2048 }, at
 
   if (!res.ok) {
     const text = await res.text();
-    if (RETRYABLE.has(res.status) && attempt < 3) {
+    if (RETRYABLE.has(res.status) && attempt < 2) {
       const retryAfter = Number(res.headers.get("retry-after")) || 0;
       await sleep(Math.max(retryAfter * 1000, 1000 * 2 ** attempt));
       return callClaude(config, { system, user, schema, maxTokens }, attempt + 1);

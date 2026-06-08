@@ -154,8 +154,10 @@
     hoursInput: "#Hours, input[name='bid[hours]']",
     proposalTextarea: "#BidContent, textarea[name='bid[content]'], textarea",
     deliveryInput: "#BidDeliveryTime, input[name='bid[deliveryTime]'], input[placeholder*='days' i], input[placeholder*='dias' i]",
-    // Submit is an <input type=submit value=Submit> — has NO text, so click by selector.
-    submitButton: ".wk-submit-block input[type='submit'], input[type='submit'][value], button[type='submit']",
+    // Submit is an <input type=submit value=Submit> in .wk-submit-block — has NO text.
+    // MUST scope to .wk-submit-block: a bare input[type=submit] also matches the
+    // header search form (earlier in the DOM), so the click would hit the wrong button.
+    submitButton: ".wk-submit-block input[type='submit'], .wk-submit-block button[type='submit'], .wk-submit-block input.btn-primary",
     submitBidText: /^submit$|^enviar$|^send$/i,
 
     // Messages / chat

@@ -405,6 +405,15 @@
   }
 
   async function runBidForm() {
+    // Hard guard: never let the bid phase hang silently to the 180s watchdog.
+    const guard = sleep(80000).then(() => "TIMEOUT");
+    const outcome = await Promise.race([_runBidForm(), guard]);
+    if (outcome === "TIMEOUT") {
+      await send({ type: "BID_DONE", slug, success: false, error: "Bid form timed out" });
+    }
+  }
+
+  async function _runBidForm() {
     await humanDelay(900, 1700);
     await autoScroll(); // render the portfolio cards / budget / proposal sections
     const resp = await send({ type: "GET_PROPOSAL", slug });
