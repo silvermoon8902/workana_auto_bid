@@ -5,8 +5,7 @@
   if (/\/messages\/bid\//i.test(location.pathname)) return;
 
   const D = window.WKDom;
-  const { textOf, qa, waitForSelector, setReactValue, humanDelay, sleep, sanitizeOutgoing, S } = D;
-  const send = (msg) => chrome.runtime.sendMessage(msg);
+  const { textOf, qa, waitForSelector, setReactValue, humanDelay, sleep, sanitizeOutgoing, send, contextValid, S } = D;
 
   let running = false;
 
@@ -101,5 +100,11 @@
 
   // Initial pass + light polling while the page is open.
   run();
-  setInterval(run, 60_000);
+  const iv = setInterval(() => {
+    if (!contextValid()) {
+      clearInterval(iv); // stop a stale (reloaded-extension) content script
+      return;
+    }
+    run();
+  }, 60_000);
 })();

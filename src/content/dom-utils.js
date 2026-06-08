@@ -7,6 +7,29 @@
 (function () {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // True while this content script's extension context is still alive. After the
+  // extension is reloaded/updated, old content scripts lose it and chrome.runtime
+  // calls throw "Extension context invalidated".
+  function contextValid() {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id);
+    } catch {
+      return false;
+    }
+  }
+
+  // Safe sendMessage: never throws (sync or async). Resolves to the response, or
+  // null if the context is gone / no receiver.
+  function send(msg) {
+    if (!contextValid()) return Promise.resolve(null);
+    try {
+      const p = chrome.runtime.sendMessage(msg);
+      return p && typeof p.catch === "function" ? p.catch(() => null) : Promise.resolve(null);
+    } catch {
+      return Promise.resolve(null);
+    }
+  }
+
   // Randomized human-like pause (anti-automation throttling).
   const humanDelay = (min = 600, max = 1800) =>
     sleep(Math.floor(min + Math.random() * (max - min)));
@@ -170,6 +193,8 @@
 
   window.WKDom = {
     sleep,
+    contextValid,
+    send,
     humanDelay,
     textOf,
     qa,

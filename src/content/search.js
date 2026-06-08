@@ -3,7 +3,7 @@
 // so it keeps working even when "Start" is pressed AFTER the page loaded.
 
 (function () {
-  const { textOf, qa, slugFromUrl, humanDelay } = window.WKDom;
+  const { textOf, qa, slugFromUrl, humanDelay, send, contextValid } = window.WKDom;
 
   // Pull "Published: 15 / Payments: 2" + country out of the author popover.
   function clientFromCard(card) {
@@ -46,19 +46,28 @@
   }
 
   async function run() {
+    if (!contextValid()) return;
     await humanDelay(500, 1100); // let the SPA settle
     const jobs = scrapeCards();
     if (jobs.length) {
       console.debug("[WK search] reporting", jobs.length, "jobs");
-      chrome.runtime.sendMessage({ type: "JOBS_FOUND", jobs }).catch(() => {});
+      send({ type: "JOBS_FOUND", jobs });
     }
   }
 
   // React to "Start" pressed after load.
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg && msg.type === "RESCAN") run();
-  });
+  try {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === "RESCAN") run();
+    });
+  } catch {}
 
   run();
-  setInterval(run, 15_000);
+  const iv = setInterval(() => {
+    if (!contextValid()) {
+      clearInterval(iv); // stop a stale (reloaded-extension) content script
+      return;
+    }
+    run();
+  }, 15_000);
 })();

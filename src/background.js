@@ -206,7 +206,7 @@ function finishInFlight() {
   if (rt.jobTabId !== null) chrome.tabs.remove(rt.jobTabId).catch(() => {});
   rt.jobTabId = null;
   rt.inFlightSlug = null;
-  setTimeout(pump, 5000); // pause 5s before starting the next job
+  setTimeout(pump, 15000); // pause 15s before starting the next job
 }
 
 // ---------------- screenshots (Phase 2 attachments) ----------------

@@ -12,7 +12,7 @@
   const slug = slugFromUrl(location.href);
   const isBidForm = /\/messages\/bid\//i.test(location.pathname);
 
-  const send = (msg) => chrome.runtime.sendMessage(msg);
+  const send = D.send; // safe sendMessage (no "context invalidated" throws)
 
   // Scroll the whole page top→bottom→top so the user can watch, and so Workana's
   // lazy-loaded sections (portfolio cards, insights, etc.) render before we read them.
