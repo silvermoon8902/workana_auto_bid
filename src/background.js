@@ -26,6 +26,7 @@ const rt = {
   queue: [], // slugs pending
 };
 let bidWatchdog = null; // safety timer so a stuck in-flight job can't freeze the queue
+let pumping = false; // synchronous lock so pump() can't open two job tabs at once
 
 // ---------------- lifecycle ----------------
 chrome.runtime.onInstalled.addListener(boot);
@@ -146,6 +147,19 @@ async function poll() {
 
 // ---------------- pump: open the next queued job ----------------
 async function pump() {
+  // Synchronous lock: pump() has awaits between the "is a job in flight?" check
+  // and creating the tab, so two concurrent calls (post-finish timer + JOBS_FOUND
+  // + tab-removed) could BOTH open a tab. The lock prevents that double tab.
+  if (pumping || rt.jobTabId !== null) return;
+  pumping = true;
+  try {
+    await _pump();
+  } finally {
+    pumping = false;
+  }
+}
+
+async function _pump() {
   const cfg = await getConfig();
   if (!cfg.enabled) return;
   if (rt.jobTabId !== null) return; // one bid at a time
@@ -192,7 +206,7 @@ function finishInFlight() {
   if (rt.jobTabId !== null) chrome.tabs.remove(rt.jobTabId).catch(() => {});
   rt.jobTabId = null;
   rt.inFlightSlug = null;
-  setTimeout(pump, 1200);
+  setTimeout(pump, 5000); // pause 5s before starting the next job
 }
 
 // ---------------- screenshots (Phase 2 attachments) ----------------
@@ -433,6 +447,20 @@ async function handle(msg, sender) {
         });
         const procMeta = (await getState("processedJobs"))[slug] || {};
         const price = computePrice(cfg, { avgPrice: data.avgPrice, budget: procMeta.budget });
+
+        // Screenshot attachments: derive the URLs from the configured portfolio
+        // links of the projects Claude chose (Claude tends to put the link in the
+        // proposal text, leaving its `attachments` empty).
+        const chosen = (proposal.projects || []).map((s) => (s || "").toLowerCase()).filter(Boolean);
+        const links = (cfg.projects || [])
+          .filter((p) => {
+            if (!p.link) return false;
+            const title = (p.title || "").toLowerCase();
+            return chosen.some((t) => title.includes(t) || t.includes(title));
+          })
+          .map((p) => p.link);
+        const attachments = links.length ? links : (proposal.attachments || []);
+
         await saveProposal(slug, {
           title: data.description.slice(0, 80),
           description: data.description,
@@ -441,8 +469,8 @@ async function handle(msg, sender) {
           skills: proposal.skills,
           projects: proposal.projects,
           deliveryTime: proposal.deliveryTime,
-          attachments: proposal.attachments,
-          _full: proposal,
+          attachments,
+          _full: { ...proposal, attachments },
         });
         return { action: "bid" };
       } catch (e) {
