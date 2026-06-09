@@ -134,7 +134,8 @@ async function resolveBid({ slug, success, dryRun, error }) {
   // message; force-close after 45s if it doesn't complete.
   if (success && !dryRun && cfg.sendFollowUp) {
     followUpSlug = realSlug;
-    bidWatchdog = setTimeout(() => finishInFlight(), 45000);
+    // Generous window — capturing 4 screenshots + pasting + nudge takes time.
+    bidWatchdog = setTimeout(() => finishInFlight(), 180000);
   } else {
     finishInFlight();
   }
@@ -534,7 +535,8 @@ async function handle(msg, sender) {
 
     case "CAPTURE": {
       if (!cfg.enabled || !cfg.attachScreenshots) return { shots: [] };
-      const urls = (msg.urls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, cfg.maxAttachments || 2);
+      const limit = msg.limit || cfg.maxAttachments || 2;
+      const urls = (msg.urls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, limit);
       const shots = [];
       for (let i = 0; i < urls.length; i++) {
         try {
@@ -570,7 +572,16 @@ async function handle(msg, sender) {
         finishInFlight(); // nothing to send → close + advance
         return { message: null };
       }
-      return { message, attachments: saved.attachments || [], dryRun: cfg.dryRun };
+      // Follow-up screenshots: aim for >=4. Prefer the chosen projects' links,
+      // then fill from the rest of the configured portfolio links.
+      let attachments = [];
+      if (cfg.attachScreenshots) {
+        const target = Math.max(4, cfg.maxAttachments || 0);
+        const chosenLinks = saved.attachments || [];
+        const allLinks = (cfg.projects || []).map((p) => p.link).filter(Boolean);
+        attachments = [...new Set([...chosenLinks, ...allLinks])].slice(0, target);
+      }
+      return { message, attachments, dryRun: cfg.dryRun };
     }
 
     case "FOLLOWUP_DONE": {

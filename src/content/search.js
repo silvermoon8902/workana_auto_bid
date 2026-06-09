@@ -49,8 +49,23 @@
     return jobs;
   }
 
+  // Workana resets the Language filter to English on reload — force "All" (xx) back
+  // on so we don't miss Portuguese/Spanish jobs. Returns true if it had to change it.
+  function ensureAllLanguages() {
+    const all = document.querySelector("#language-0, input[type='checkbox'][value='xx']");
+    if (all && !all.checked) {
+      const label = document.querySelector("label[for='" + all.id + "']") || all;
+      label.click();
+      return true;
+    }
+    return false;
+  }
+
   async function run() {
     if (!contextValid()) return;
+    if (ensureAllLanguages()) {
+      await humanDelay(1500, 2600); // let the list re-filter after switching to All
+    }
     await humanDelay(500, 1100); // let the SPA settle
     const jobs = scrapeCards();
     if (jobs.length) {

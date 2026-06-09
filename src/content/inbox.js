@@ -1,6 +1,7 @@
 // inbox.js — runs on /inbox/<slug>/<user>, the conversation Workana opens right
-// after a bid is submitted. Posts a short follow-up message (and best-effort
-// project screenshots) — but ONLY for the bid that was just submitted.
+// after a bid is submitted. Posts project screenshots (by PASTING images, which
+// is how Workana uploads them) followed by a short nudge message — but ONLY for
+// the bid that was just submitted.
 
 (function () {
   const D = window.WKDom;
@@ -19,23 +20,46 @@
     return new File([arr], filename, { type: mime });
   }
 
-  // Best-effort: attach project screenshots to the chat's file input, if present.
-  async function attachToChat(urls) {
-    const list = (urls || []).filter(Boolean);
-    if (!list.length) return;
-    const input = document.querySelector(S.chatFileInput);
-    if (!input) return;
-    const resp = await send({ type: "CAPTURE", urls: list });
-    const shots = (resp && resp.shots) || [];
-    for (const shot of shots) {
+  // Paste an image into the compose box — Workana intercepts the paste and uploads it.
+  function pasteImage(target, file) {
+    try {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      target.focus();
+      let evt;
       try {
-        const file = dataUrlToFile(shot.dataUrl, shot.filename || "project.png");
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        input.files = dt.files;
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-        await humanDelay(1500, 2500);
-      } catch {}
+        evt = new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt });
+      } catch {
+        evt = new Event("paste", { bubbles: true, cancelable: true });
+      }
+      if (!evt.clipboardData) {
+        try {
+          Object.defineProperty(evt, "clipboardData", { value: dt });
+        } catch {}
+      }
+      target.dispatchEvent(evt);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function clickSend() {
+    const btn = qa(S.sendButton).find((b) => b.offsetParent !== null) || document.querySelector(S.sendButton);
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  }
+
+  function typeInto(box, text) {
+    if (box.isContentEditable) {
+      box.focus();
+      box.textContent = text;
+      box.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    } else {
+      setReactValue(box, text);
     }
   }
 
@@ -46,35 +70,44 @@
     const resp = await send({ type: "GET_FOLLOWUP", slug });
     if (!resp || !resp.message) return; // not the just-bid thread, or nothing to send
 
-    const box = await waitForSelector(S.replyBox, { timeout: 6000 });
+    let box = await waitForSelector(S.replyBox, { timeout: 6000 });
     if (!box) {
       await send({ type: "FOLLOWUP_DONE", slug, sent: false });
       return;
     }
 
-    await attachToChat(resp.attachments); // best-effort screenshots
-
-    const safe = sanitizeOutgoing(resp.message);
-    if (box.isContentEditable) {
-      box.focus();
-      box.textContent = safe;
-      box.dispatchEvent(new InputEvent("input", { bubbles: true }));
-    } else {
-      setReactValue(box, safe);
+    // 1) Capture + PASTE the project screenshots, then send them as an image message.
+    let pasted = 0;
+    if (!resp.dryRun && resp.attachments && resp.attachments.length) {
+      const cap = await send({ type: "CAPTURE", urls: resp.attachments, limit: resp.attachments.length });
+      const shots = (cap && cap.shots) || [];
+      for (const shot of shots) {
+        try {
+          const file = dataUrlToFile(shot.dataUrl, shot.filename || "project.png");
+          if (pasteImage(box, file)) pasted++;
+          await humanDelay(1600, 2600); // let the upload register
+        } catch {}
+      }
+      if (pasted) {
+        await humanDelay(900, 1500);
+        clickSend(); // send the pasted images
+        await humanDelay(2500, 4000);
+      }
     }
+
+    // 2) Send the nudge text so the client checks the images.
+    box = (await waitForSelector(S.replyBox, { timeout: 4000 })) || box;
+    const safe = sanitizeOutgoing(resp.message);
+    typeInto(box, safe);
     await humanDelay(800, 1400);
 
     let sent = false;
     if (resp.dryRun) {
-      console.log("[WK inbox] DRY RUN — follow-up drafted, not sent:", safe);
+      console.log("[WK inbox] DRY RUN — follow-up drafted (not sent):", safe);
     } else {
-      const btn = qa(S.sendButton).find((b) => b.offsetParent !== null) || document.querySelector(S.sendButton);
-      if (btn) {
-        btn.click();
-        sent = true;
-      }
+      sent = clickSend();
     }
-    await send({ type: "FOLLOWUP_DONE", slug, sent, title: document.title });
+    await send({ type: "FOLLOWUP_DONE", slug, sent: sent || pasted > 0, title: document.title });
   }
 
   run();
