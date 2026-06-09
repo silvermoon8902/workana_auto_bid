@@ -93,10 +93,10 @@
     ) {
       return true;
     }
-    // The "Place a bid" CTA turns into edit/view-proposal once you've bid.
+    // The "Place a bid" CTA turns into "Improve proposal" (edit/view) once you've bid.
     const cta = document.querySelector("#bid_button");
     const ctaText = cta ? textOf(cta).toLowerCase() : "";
-    if (cta && /(edit|editar|ver|view)\s+(proposal|proposta|propuesta|bid|oferta)/i.test(ctaText)) return true;
+    if (cta && /(improve|edit|editar|ver|view|mejorar|melhorar)\s+(proposal|proposta|propuesta|bid|oferta)/i.test(ctaText)) return true;
     return false;
   }
 
