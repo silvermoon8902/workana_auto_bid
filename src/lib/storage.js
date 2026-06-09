@@ -74,7 +74,7 @@ export async function isHandled(slug) {
   const processed = await getProcessed();
   const rec = processed[slug];
   // "scanned" is a transient in-flight marker; treat bid/skipped/error as done.
-  return rec && ["bid", "skipped-scammer", "error"].includes(rec.status);
+  return rec && ["bid", "skipped-scammer", "skipped", "error"].includes(rec.status);
 }
 
 // --- scammer list ---

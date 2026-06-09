@@ -81,6 +81,24 @@
     return (blocks[0] || getBodyText()).slice(0, 4000);
   }
 
+  // Has a proposal already been sent for this job? (Restart-safety: avoids
+  // re-bidding a job that was submitted but never got marked "bid" in storage.)
+  function alreadySubmitted() {
+    const body = getBodyText().toLowerCase();
+    if (
+      /você já enviou|ja enviou sua proposta|enviou uma proposta para este|ya enviaste|ya has enviado|you (already|have already) (sent|submitted)|already applied to this|your proposal has been sent/i.test(
+        body
+      )
+    ) {
+      return true;
+    }
+    // The "Place a bid" CTA turns into edit/view-proposal once you've bid.
+    const cta = document.querySelector("#bid_button");
+    const ctaText = cta ? textOf(cta).toLowerCase() : "";
+    if (cta && /(edit|editar|ver|view)\s+(proposal|proposta|propuesta|bid|oferta)/i.test(ctaText)) return true;
+    return false;
+  }
+
   function getClientPanel() {
     // Preferred: the structured .item-data blocks (number in <p class="h4">, label below).
     const items = qa(".item-data");
@@ -152,6 +170,20 @@
   async function runDetail() {
     await humanDelay(900, 1700);
     await autoScroll(); // show activity + load lazy sections before scraping
+
+    // Skip (and remember) jobs we've already bid on — don't waste a Claude call.
+    if (alreadySubmitted()) {
+      await send({ type: "ALREADY_BID", slug });
+      return;
+    }
+
+    // Skip hourly jobs — only fixed-price fits the bid flow.
+    const budgetText = textOf(document.querySelector("h4.budget, .budget"));
+    if (/\/\s*hour\b|\/\s*hora\b|per hour|por hora|hourly/i.test(budgetText)) {
+      await send({ type: "SKIP_JOB", slug, reason: "hourly" });
+      return;
+    }
+
     const description = getDescription();
     const client = getClientPanel();
     const avgPrice = await fetchInsightAverage();
@@ -267,67 +299,90 @@
     return { title, score };
   }
 
-  // Click the SELECT (circle-plus) label on the best-matching visible cards.
-  async function selectVisibleCards(titles, skills, picked) {
-    const ranked = qa(S.portfolioCard)
-      .filter((c) => c.offsetParent !== null)
+  // A card is selected when it has the `selected` class / the verified (check) icon.
+  function cardSelected(card) {
+    return card.classList.contains("selected") || !!card.querySelector(".wk2-icon-circle-verified");
+  }
+
+  // The cards to act on: the Search-portfolio modal's cards when it's open, else inline.
+  function activeCardRoot() {
+    const modal = qa(".modal-body, .modal-dialog, [role='dialog']").find(
+      (m) => m.offsetParent !== null && m.querySelector(S.portfolioCard)
+    );
+    return modal || document;
+  }
+
+  // Select the best-matching UNSELECTED cards (never re-click a selected one — that
+  // would deselect it). Counts the REAL selected state so 3 is 3.
+  async function selectVisibleCards(titles, skills) {
+    const root = activeCardRoot();
+    const cards = qa(S.portfolioCard, root).filter((c) => c.offsetParent !== null);
+    let selected = cards.filter(cardSelected).length;
+    if (selected >= 3) return selected;
+
+    const ranked = cards
+      .filter((c) => !cardSelected(c))
       .map((c) => ({ c, ...scoreCard(c, titles, skills) }))
-      .filter((x) => x.title && !picked.has(x.title) && x.score > 0)
+      .filter((x) => x.title && x.score > 0)
       .sort((a, b) => b.score - a.score);
-    for (const { c, title } of ranked) {
-      if (picked.size >= 3) break;
+    for (const { c } of ranked) {
+      if (selected >= 3) break;
       const sel = c.querySelector(S.portfolioSelect);
       if (sel) {
         sel.click();
-        picked.add(title);
-        await sleep(300);
+        selected++;
+        await sleep(400);
       }
     }
+    return selected;
+  }
+
+  async function confirmModal() {
+    // Click the footer "Add project" button (a.btn-success) — it confirms the
+    // selection AND closes the modal. NOT the inline #portfolioOpenAddNew.
+    const footer = qa(".modal-footer").find((f) => f.offsetParent !== null);
+    if (!footer) return false;
+    const btn =
+      qa("a,button", footer).find((b) =>
+        /add project|adicionar projeto|agregar proyecto|añadir proyecto/i.test(textOf(b))
+      ) || footer.querySelector("a.btn-success, .btn-success");
+    if (btn) {
+      btn.click();
+      await humanDelay(700, 1200);
+      return true;
+    }
+    return false;
   }
 
   async function selectProjects(want) {
     const titles = (want.titles || []).map((s) => (s || "").toLowerCase().trim()).filter(Boolean);
     const skills = (want.skills || []).map((s) => (s || "").toLowerCase().trim()).filter(Boolean);
     if (!titles.length && !skills.length) return 0;
-    const picked = new Set();
 
-    // 1) Pick from the inline cards.
-    await selectVisibleCards(titles, skills, picked);
+    // 1) Inline cards.
+    let selected = await selectVisibleCards(titles, skills);
 
-    // 2) Still need more relevant ones → open "Search portfolio" and page through.
-    if (picked.size < 3) {
+    // 2) Need more → open "Search portfolio", page "See more", select, then confirm.
+    if (selected < 3) {
       const open =
         document.querySelector("#portfolioOpenBidDialog") ||
         (await waitForText(/search portfolio|buscar portfolio/i, { selector: "button,a", timeout: 1500 }));
       if (open) {
         open.click();
         await humanDelay(900, 1600);
-        for (let i = 0; i < 4 && picked.size < 3; i++) {
-          await selectVisibleCards(titles, skills, picked);
-          if (picked.size >= 3) break;
-          const more = await waitForText(/see more|ver más|ver mais/i, { selector: "button,a", timeout: 1500 });
+        for (let i = 0; i < 6 && selected < 3; i++) {
+          selected = await selectVisibleCards(titles, skills);
+          if (selected >= 3) break;
+          const more = await waitForText(/see more|ver más|ver mais/i, { selector: "button,a,.btn", timeout: 1500 });
           if (!more) break;
           more.click();
           await humanDelay(900, 1600);
         }
-        // Confirm the modal selection with its footer "Add project" button
-        // (a.btn-success in .modal-footer) — NOT the inline #portfolioOpenAddNew.
-        const modal = document.querySelector(".modal-dialog, [role='dialog'], .modal, .wk-modal, .modal-content");
-        if (modal) {
-          const footer = modal.querySelector(".modal-footer") || modal;
-          const btn =
-            footer.querySelector("a.btn-success, .btn-success") ||
-            qa("a,button", footer).find((b) =>
-              /add project|adicionar projeto|agregar proyecto|añadir proyecto|confirmar|^done$|^listo$/i.test(textOf(b))
-            );
-          if (btn) {
-            btn.click();
-            await humanDelay(700, 1200);
-          }
-        }
+        // Confirm + close the modal (the "Add project" button appears once picks exist).
+        await confirmModal();
       }
     }
-    return picked.size;
+    return selected;
   }
 
   async function fillBudget(price) {
@@ -416,6 +471,13 @@
   async function _runBidForm() {
     await humanDelay(900, 1700);
     await autoScroll(); // render the portfolio cards / budget / proposal sections
+
+    // If Workana shows we've already bid (no form / "already sent"), skip.
+    if (alreadySubmitted()) {
+      await send({ type: "ALREADY_BID", slug });
+      return;
+    }
+
     const resp = await send({ type: "GET_PROPOSAL", slug });
     if (!resp || !resp.proposal) {
       await send({ type: "BID_DONE", slug, success: false, error: "No proposal available" });

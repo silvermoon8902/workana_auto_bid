@@ -540,6 +540,26 @@ async function handle(msg, sender) {
       return { ok: true };
     }
 
+    case "SKIP_JOB": {
+      if (rt.inFlightSlug && msg.slug !== rt.inFlightSlug) return { ok: true };
+      const proc = (await getState("processedJobs"))[msg.slug] || {};
+      await markJob(msg.slug, "skipped", { reason: msg.reason, title: proc.title });
+      notify("info", `⏭️ Skipped (${msg.reason}): ${proc.title || msg.slug}`);
+      finishInFlight();
+      return { ok: true };
+    }
+
+    case "ALREADY_BID": {
+      // The job page shows a proposal was already sent — mark it bid so it stays
+      // skipped (restart-safety against duplicate proposals) and move on.
+      if (rt.inFlightSlug && msg.slug !== rt.inFlightSlug) return { ok: true };
+      const proc = (await getState("processedJobs"))[msg.slug] || {};
+      await markJob(msg.slug, "bid", { note: "already submitted", title: proc.title });
+      notify("info", `↩️ Already bid — skipped: ${proc.title || msg.slug}`);
+      finishInFlight();
+      return { ok: true };
+    }
+
     // ---- auto-reply flow ----
     case "MESSAGES_ENABLED":
       return { enabled: cfg.enabled, dryRun: cfg.dryRun };

@@ -37,6 +37,10 @@
       const title = textOf(a);
       const snippet = textOf(card.querySelector(".html-desc, .project-details")) || "";
       const budget = textOf(card.querySelector(".budget .values, .budget")) || "";
+
+      // Skip hourly jobs ("USD 15 - 45 / hour") — only fixed-price fits the bid flow.
+      if (/\/\s*hour\b|\/\s*hora\b|per hour|por hora|hourly/i.test(budget)) continue;
+
       const bids = Number((textOf(card).match(/Bids?:?\s*(\d+)/i) || [])[1] || 0);
       const client = clientFromCard(card);
 
