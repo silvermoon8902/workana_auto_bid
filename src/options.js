@@ -47,7 +47,6 @@ async function load() {
   $("pollMinutes").value = c.pollMinutes;
   $("maxBidsPerHour").value = c.maxBidsPerHour;
   $("dryRun").checked = c.dryRun;
-  $("followUpQuestion").checked = c.followUpQuestion;
   $("attachScreenshots").checked = c.attachScreenshots;
   $("maxAttachments").value = c.maxAttachments;
   $("focusTabs").checked = c.focusTabs;
@@ -92,7 +91,6 @@ async function save() {
     pollMinutes: Number($("pollMinutes").value) || 1,
     maxBidsPerHour: Number($("maxBidsPerHour").value) || 10,
     dryRun: $("dryRun").checked,
-    followUpQuestion: $("followUpQuestion").checked,
     attachScreenshots: $("attachScreenshots").checked,
     maxAttachments: Number($("maxAttachments").value) || 0,
     focusTabs: $("focusTabs").checked,
