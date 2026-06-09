@@ -40,9 +40,24 @@ export function isSpanishOrPortugueseCountry(country) {
   return SPANISH_PT_COUNTRIES.has(country.trim().toLowerCase());
 }
 
-// data: { clientName, country, publishedCount, paidCount, postingText, priorPostingLangs[] , postingLang }
+// Build the set of skip countries: built-in defaults + user-configured list.
+function parseBlocked(blocked) {
+  const set = new Set(["ukraine", "ucrania", "ucrânia", "philippines", "filipinas"]);
+  if (Array.isArray(blocked)) blocked.forEach((c) => c && set.add(String(c).trim().toLowerCase()));
+  else if (typeof blocked === "string")
+    blocked.split(",").forEach((c) => c.trim() && set.add(c.trim().toLowerCase()));
+  return set;
+}
+
+// data: { clientName, country, publishedCount, paidCount, postingText, priorPostingLangs[], postingLang, blockedCountries }
 export function assessClient(data) {
   const reasons = [];
+
+  // Rule 0: client from a blocked country (mostly scammers) → skip.
+  const blocked = parseBlocked(data.blockedCountries);
+  if (data.country && blocked.has(data.country.trim().toLowerCase())) {
+    reasons.push(`Client country (${data.country}) is on the skip list.`);
+  }
 
   // Rule 1: lots of postings, zero payments → likely never pays.
   if (Number(data.publishedCount) >= 3 && Number(data.paidCount) === 0) {

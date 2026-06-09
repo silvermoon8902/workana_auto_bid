@@ -135,7 +135,7 @@ async function resolveBid({ slug, success, dryRun, error }) {
   if (success && !dryRun && cfg.sendFollowUp) {
     followUpSlug = realSlug;
     // Generous window — capturing 4 screenshots + pasting + nudge takes time.
-    bidWatchdog = setTimeout(() => finishInFlight(), 180000);
+    bidWatchdog = setTimeout(() => finishInFlight(), 300000);
   } else {
     finishInFlight();
   }
@@ -253,6 +253,27 @@ async function captureUrl(url) {
   } finally {
     chrome.windows.remove(win.id).catch(() => {});
     if (prev != null) chrome.windows.update(prev, { focused: true }).catch(() => {});
+  }
+}
+
+// Fetch an image URL (cross-origin OK via <all_urls> host permission) and return
+// a data URL. Service workers have no FileReader, so encode via arrayBuffer+btoa.
+async function fetchImageDataUrl(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const type = blob.type && blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+    return `data:${type};base64,${btoa(bin)}`;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -388,6 +409,7 @@ async function handle(msg, sender) {
           paidCount: job.paidCount,
           postingText: job.snippet,
           postingLang,
+          blockedCountries: cfg.blockedCountries,
         });
         if (verdict.flagged) {
           await addScammer({ clientName: job.clientName || job.slug, slug: job.slug, reasons: verdict.reasons });
@@ -444,6 +466,7 @@ async function handle(msg, sender) {
         postingText: data.postingText,
         postingLang,
         priorPostingLangs,
+        blockedCountries: cfg.blockedCountries,
       });
       if (verdict.flagged) {
         await addScammer({ clientName: data.clientName || slug, slug, reasons: verdict.reasons });
@@ -556,6 +579,28 @@ async function handle(msg, sender) {
       return { ok: true };
     }
 
+    case "SET_FOLLOWUP_IMAGES": {
+      const proposals = await getState("proposals");
+      if (proposals[msg.slug]) {
+        proposals[msg.slug].followUpImages = msg.images || [];
+        await setState("proposals", proposals);
+      }
+      return { ok: true };
+    }
+
+    case "FETCH_IMAGES": {
+      const urls = (msg.urls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, msg.limit || 8);
+      const shots = [];
+      for (const url of urls) {
+        const dataUrl = await fetchImageDataUrl(url);
+        if (dataUrl) {
+          const ext = dataUrl.startsWith("data:image/png") ? "png" : "jpg";
+          shots.push({ dataUrl, filename: `project-${shots.length + 1}.${ext}` });
+        }
+      }
+      return { shots };
+    }
+
     case "GET_FOLLOWUP": {
       // Only the just-submitted bid's /inbox thread gets a follow-up (one-shot).
       if (!followUpSlug || followUpSlug !== msg.slug) return { message: null };
@@ -572,16 +617,14 @@ async function handle(msg, sender) {
         finishInFlight(); // nothing to send → close + advance
         return { message: null };
       }
-      // Follow-up screenshots: aim for >=4. Prefer the chosen projects' links,
-      // then fill from the rest of the configured portfolio links.
-      let attachments = [];
+      // Follow-up images: the highlighted projects' actual portfolio images
+      // (captured from the bid form's selected cards), aim for >=4.
+      let images = [];
       if (cfg.attachScreenshots) {
         const target = Math.max(4, cfg.maxAttachments || 0);
-        const chosenLinks = saved.attachments || [];
-        const allLinks = (cfg.projects || []).map((p) => p.link).filter(Boolean);
-        attachments = [...new Set([...chosenLinks, ...allLinks])].slice(0, target);
+        images = (saved.followUpImages || []).slice(0, target);
       }
-      return { message, attachments, dryRun: cfg.dryRun };
+      return { message, images, dryRun: cfg.dryRun };
     }
 
     case "FOLLOWUP_DONE": {

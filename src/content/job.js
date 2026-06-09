@@ -54,7 +54,8 @@
       cl: "Chile", pe: "Peru", es: "Spain", ve: "Venezuela", ec: "Ecuador", uy: "Uruguay",
       bo: "Bolivia", py: "Paraguay", gt: "Guatemala", do: "Dominican Republic", hn: "Honduras",
       sv: "El Salvador", ni: "Nicaragua", cr: "Costa Rica", pa: "Panama", cu: "Cuba",
-      us: "United States",
+      us: "United States", ua: "Ukraine", ph: "Philippines", in: "India",
+      pk: "Pakistan", bd: "Bangladesh", ng: "Nigeria",
     };
     return map[code] || "";
   }
@@ -337,6 +338,21 @@
     return selected;
   }
 
+  // Collect portfolio-card image URLs (the real project images on workana S3) —
+  // selected cards first, then fill from the rest — for the follow-up message.
+  function collectPortfolioImages(target) {
+    const cards = qa(S.portfolioCard).filter((c) => c.offsetParent !== null);
+    const ordered = [...cards.filter(cardSelected), ...cards.filter((c) => !cardSelected(c))];
+    const urls = [];
+    for (const c of ordered) {
+      const img = c.querySelector(".wk-portfolio-card-img img, img");
+      const src = img && img.src;
+      if (src && /^https?:\/\//i.test(src) && !urls.includes(src)) urls.push(src);
+      if (urls.length >= target) break;
+    }
+    return urls;
+  }
+
   async function confirmModal() {
     // Click the footer "Add project" button (a.btn-success) — it confirms the
     // selection AND closes the modal. NOT the inline #portfolioOpenAddNew.
@@ -496,6 +512,12 @@
     await humanDelay();
     await selectProjects({ titles: p.projects || [], skills: p.skills || [] });
     await humanDelay();
+
+    // Stash the highlighted projects' images for the post-bid follow-up message.
+    try {
+      const imgs = collectPortfolioImages(Math.max(4, resp.maxAttachments || 4));
+      if (imgs.length) await send({ type: "SET_FOLLOWUP_IMAGES", slug, images: imgs });
+    } catch {}
     await fillBudget(resp.price);
     await humanDelay();
     await fillProposal(p.proposalText || "");

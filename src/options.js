@@ -46,6 +46,7 @@ async function load() {
   $("underbidPct").value = c.underbidPct;
   $("pollMinutes").value = c.pollMinutes;
   $("maxBidsPerHour").value = c.maxBidsPerHour;
+  $("blockedCountries").value = c.blockedCountries;
   $("dryRun").checked = c.dryRun;
   $("attachScreenshots").checked = c.attachScreenshots;
   $("maxAttachments").value = c.maxAttachments;
@@ -90,6 +91,7 @@ async function save() {
     underbidPct: Number($("underbidPct").value) || 15,
     pollMinutes: Number($("pollMinutes").value) || 1,
     maxBidsPerHour: Number($("maxBidsPerHour").value) || 10,
+    blockedCountries: $("blockedCountries").value,
     dryRun: $("dryRun").checked,
     attachScreenshots: $("attachScreenshots").checked,
     maxAttachments: Number($("maxAttachments").value) || 0,

@@ -5,7 +5,36 @@
 
 (function () {
   const D = window.WKDom;
-  const { qa, waitForSelector, setReactValue, humanDelay, sanitizeOutgoing, send, contextValid, S } = D;
+  const { textOf, qa, waitForSelector, setReactValue, humanDelay, sleep, sanitizeOutgoing, send, contextValid, S } = D;
+
+  // True while an image is uploading. Workana shows an optimistic message with
+  // id "optimistic_upload…", a <small class="sending">, and the text
+  // "Wait! we are uploading your file".
+  function uploadBusy() {
+    if (
+      qa("[id*='optimistic_upload'], small.sending, .list-attachments-loading, .control-spinner, .wk2-icon-spinner, .wk2-icon-spin")
+        .some((e) => e.offsetParent !== null)
+    ) {
+      return true;
+    }
+    return qa("h5 span, h5, small, p").some(
+      (e) =>
+        e.offsetParent !== null &&
+        /uploading your file|we are uploading|subiendo (tu )?archivo|enviando (o )?arquivo|estamos enviando/i.test(textOf(e))
+    );
+  }
+
+  // Wait for the upload to START (briefly), then wait for it to FINISH.
+  async function waitForUploads(timeout = 40000) {
+    const s0 = Date.now();
+    while (Date.now() - s0 < 4000 && !uploadBusy()) await sleep(300);
+    const s1 = Date.now();
+    while (Date.now() - s1 < timeout) {
+      if (!uploadBusy()) return true;
+      await sleep(500);
+    }
+    return false;
+  }
 
   const m = location.pathname.match(/\/inbox\/([^/?#]+)/i);
   const slug = m ? m[1] : null;
@@ -76,22 +105,25 @@
       return;
     }
 
-    // 1) Capture + PASTE the project screenshots, then send them as an image message.
+    // 1) Fetch the highlighted projects' images and PASTE them, then send as a message.
     let pasted = 0;
-    if (!resp.dryRun && resp.attachments && resp.attachments.length) {
-      const cap = await send({ type: "CAPTURE", urls: resp.attachments, limit: resp.attachments.length });
+    if (!resp.dryRun && resp.images && resp.images.length) {
+      const cap = await send({ type: "FETCH_IMAGES", urls: resp.images, limit: resp.images.length });
       const shots = (cap && cap.shots) || [];
       for (const shot of shots) {
         try {
           const file = dataUrlToFile(shot.dataUrl, shot.filename || "project.png");
           if (pasteImage(box, file)) pasted++;
-          await humanDelay(1600, 2600); // let the upload register
+          await humanDelay(1000, 1800);
+          await waitForUploads(45000); // wait for THIS image to finish uploading
         } catch {}
       }
       if (pasted) {
-        await humanDelay(900, 1500);
-        clickSend(); // send the pasted images
-        await humanDelay(2500, 4000);
+        await waitForUploads(45000); // make sure every upload is finished
+        await humanDelay(700, 1200);
+        clickSend(); // send the images
+        await waitForUploads(20000); // wait until the send completes
+        await humanDelay(2000, 3500);
       }
     }
 
