@@ -187,8 +187,10 @@
     conversationItem: "[class*='conversation'] [class*='item'], [class*='thread'] a, [class*='chat-list'] li",
     unreadBadge: "[class*='unread'], [class*='new'], [class*='badge']",
     messageBubble: "[class*='message'] [class*='bubble'], [class*='msg']",
-    replyBox: "textarea[placeholder*='reply' i], textarea[placeholder*='mensaje' i], textarea[placeholder*='mensagem' i], div[contenteditable='true']",
-    sendButton: "button[type='submit'], [class*='send']",
+    // Chat reply (verified /inbox DOM): #MessageContent textarea, #SubmitMessage button.
+    replyBox: "#MessageContent, textarea[name='message[content]'], textarea[placeholder*='reply' i], textarea[placeholder*='mensaje' i], textarea[placeholder*='mensagem' i], div[contenteditable='true']",
+    sendButton: "#SubmitMessage, button.btn-send, button[type='submit']",
+    chatFileInput: "#AttachmentUpload, input[type='file'][name='message.attachments'], input[type='file']",
   };
 
   window.WKDom = {

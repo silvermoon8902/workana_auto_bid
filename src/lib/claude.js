@@ -146,7 +146,11 @@ export async function generateProposal(config, { description, clientName, countr
   const system =
     "You are an expert Workana freelancer writing winning bid proposals. " +
     config.proposalPrompt +
-    " Keep proposalText under ~180 words. Output ONLY a single valid JSON object matching the schema — no markdown fences, no text before or after.";
+    " Keep proposalText under ~180 words." +
+    " Do NOT write any price, budget, total, fee, or delivery-time/timeline line inside proposalText" +
+    " (no 'TotalBudget', no 'Timeline', no '$' amounts, no 'X days') — those are entered in the" +
+    " separate Budget and delivery fields, so repeating them only risks contradicting the real values." +
+    " Output ONLY a single valid JSON object matching the schema — no markdown fences, no text before or after.";
   const user = [
     `MY PROFILE:\n${config.profile}`,
     config.ranking ? `MY WORKANA RANKING: ${config.ranking}` : "",
@@ -157,7 +161,8 @@ export async function generateProposal(config, { description, clientName, countr
     clientName ? `CLIENT: ${clientName}${country ? " from " + country : ""}` : "",
     `PROJECT DESCRIPTION:\n${description}`,
     `\nReturn: proposalText (in the project's language), skills (max 5 to highlight that match this project), ` +
-      `projects (max 3 exact portfolio titles), deliveryTime (e.g. "7 days"), ` +
+      `projects (max 3 exact portfolio titles), ` +
+      `deliveryTime in the SAME language as the proposal (e.g. "7 days" / "7 dias" / "7 días"), ` +
       `attachments (array of URLs from my portfolio worth attaching, or []).`,
   ]
     .filter(Boolean)
@@ -178,6 +183,29 @@ export async function generateReply(config, { jobPosting, sentProposal, chatHist
     `\nReturn replyText (same language/tone as the client) and shouldEscalate (true if a human should handle it).`,
   ].join("\n\n");
   return callClaude(config, { system, user, schema: REPLY_SCHEMA, maxTokens: 1024 });
+}
+
+const FOLLOWUP_SCHEMA = {
+  type: "object",
+  properties: { message: { type: "string" } },
+  required: ["message"],
+  additionalProperties: false,
+};
+
+// Short follow-up message posted in the /inbox thread right after bidding.
+export async function generateFollowUp(config, { description, proposal }) {
+  const system =
+    "You are a Workana freelancer sending a SHORT, friendly follow-up message right after submitting a proposal, to nudge the client to reply. " +
+    (config.followUpPrompt || "") +
+    " Under 55 words, in the SAME language as the project. No contact info, no external links, no prices or deadlines." +
+    " Output ONLY a single valid JSON object matching the schema — no markdown fences, no text before or after.";
+  const user = [
+    `PROJECT:\n${(description || "").slice(0, 1500)}`,
+    `MY PROPOSAL (already sent):\n${(proposal || "").slice(0, 1500)}`,
+    `\nReturn { message } — a brief follow-up (e.g. offer to share relevant samples, ask one quick engaging question).`,
+  ].join("\n\n");
+  const out = await callClaude(config, { system, user, schema: FOLLOWUP_SCHEMA, maxTokens: 512 });
+  return out.message;
 }
 
 // Fallback language classifier for the scam heuristic.

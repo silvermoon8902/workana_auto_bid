@@ -403,8 +403,15 @@
       document.querySelector(S.proposalTextarea) || inputAfterLabel(/proposal details/i) || (await waitForSelector(S.proposalTextarea, { timeout: 4000 }));
     if (!ta || !text) return;
     await reveal(ta);
+    // Drop any budget/timeline footer lines that contradict the real fields.
+    const stripped = String(text)
+      .split("\n")
+      .filter((l) => !/total\s*budget|presupuesto\s*total|or[çc]amento\s*total|timeline\s*:|^\s*[💰⏳⌛]/i.test(l))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
     // Defuse Workana's link/contact filter so the bid isn't blocked/suspended.
-    const safe = sanitizeOutgoing(text);
+    const safe = sanitizeOutgoing(stripped);
     if (ta.isContentEditable) {
       ta.focus();
       ta.textContent = safe;

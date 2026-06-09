@@ -50,6 +50,11 @@
       "matches": ["*://*.workana.com/messages*"],
       "js": ["src/content/dom-utils.js", "src/content/messages.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.workana.com/inbox/*"],
+      "js": ["src/content/dom-utils.js", "src/content/inbox.js"],
+      "run_at": "document_idle"
     }
   ]
 }

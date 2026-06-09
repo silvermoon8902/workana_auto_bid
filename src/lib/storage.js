@@ -29,6 +29,9 @@ export const DEFAULT_CONFIG = {
   attachScreenshots: true, // screenshot portfolio URLs Claude returns and attach them
   maxAttachments: 2, // cap how many screenshots to capture/attach per bid
   focusTabs: true, // open each job tab focused + scroll it (watch the automation)
+  sendFollowUp: true, // after a bid, post a short follow-up message in the /inbox thread
+  followUpPrompt:
+    "Send a short, warm follow-up that offers to share relevant work samples and asks one quick engaging question.",
 };
 
 const STATE_KEYS = {

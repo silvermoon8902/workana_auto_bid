@@ -13,7 +13,7 @@ import {
   canBidNow,
   recordBid,
 } from "./lib/storage.js";
-import { generateProposal, generateReply, detectLanguage } from "./lib/claude.js";
+import { generateProposal, generateReply, generateFollowUp, detectLanguage } from "./lib/claude.js";
 import { assessClient, guessLanguage, isSpanishOrPortugueseCountry } from "./lib/scammer.js";
 
 const ALARM = "workana-poll";
@@ -27,6 +27,8 @@ const rt = {
 };
 let bidWatchdog = null; // safety timer so a stuck in-flight job can't freeze the queue
 let pumping = false; // synchronous lock so pump() can't open two job tabs at once
+let bidResolved = false; // guard so a bid resolves once (redirect detector + BID_DONE both fire)
+let followUpSlug = null; // slug awaiting a post-bid follow-up message in /inbox
 
 // ---------------- lifecycle ----------------
 chrome.runtime.onInstalled.addListener(boot);
@@ -112,11 +114,13 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 // detector, the content-script BID_DONE, and the watchdog).
 async function resolveBid({ slug, success, dryRun, error }) {
   const realSlug = slug || rt.inFlightSlug;
-  if (!realSlug || rt.inFlightSlug !== realSlug) return; // already resolved
+  if (!realSlug || rt.inFlightSlug !== realSlug || bidResolved) return; // resolve once
+  bidResolved = true;
   if (bidWatchdog) {
     clearTimeout(bidWatchdog);
     bidWatchdog = null;
   }
+  const cfg = await getConfig();
   const saved = await getProposal(realSlug);
   const proc = (await getState("processedJobs"))[realSlug] || {};
   const label = proc.title || (saved && saved.title) || realSlug;
@@ -125,7 +129,15 @@ async function resolveBid({ slug, success, dryRun, error }) {
   if (success && dryRun) notify("info", `📝 Dry-run filled: ${label}${saved ? ` ($${saved.price})` : ""}`);
   else if (success) notify("success", `✅ Bid submitted: ${label}${saved ? ` ($${saved.price})` : ""}`);
   else notify("error", `⚠️ Bid failed: ${label}${error ? ` — ${error}` : ""}`);
-  finishInFlight();
+
+  // On a real success, keep the /inbox tab open so inbox.js can post a follow-up
+  // message; force-close after 45s if it doesn't complete.
+  if (success && !dryRun && cfg.sendFollowUp) {
+    followUpSlug = realSlug;
+    bidWatchdog = setTimeout(() => finishInFlight(), 45000);
+  } else {
+    finishInFlight();
+  }
 }
 
 // ---------------- polling: ensure the search tab is loaded ----------------
@@ -206,6 +218,8 @@ function finishInFlight() {
   if (rt.jobTabId !== null) chrome.tabs.remove(rt.jobTabId).catch(() => {});
   rt.jobTabId = null;
   rt.inFlightSlug = null;
+  bidResolved = false;
+  followUpSlug = null;
   setTimeout(pump, 15000); // pause 15s before starting the next job
 }
 
@@ -537,6 +551,31 @@ async function handle(msg, sender) {
       // Real submits resolve via the /inbox redirect detector; this path mainly
       // covers dry-run and "submit didn't redirect / button missing" cases.
       await resolveBid({ slug: msg.slug, success: msg.success, dryRun: msg.dryRun, error: msg.error });
+      return { ok: true };
+    }
+
+    case "GET_FOLLOWUP": {
+      // Only the just-submitted bid's /inbox thread gets a follow-up (one-shot).
+      if (!followUpSlug || followUpSlug !== msg.slug) return { message: null };
+      followUpSlug = null;
+      const saved = await getProposal(msg.slug);
+      if (!saved) return { message: null };
+      let message = "";
+      try {
+        message = await generateFollowUp(cfg, { description: saved.description, proposal: saved.proposal });
+      } catch (e) {
+        console.warn("[WK bg] follow-up generation failed", e);
+      }
+      if (!message) {
+        finishInFlight(); // nothing to send → close + advance
+        return { message: null };
+      }
+      return { message, attachments: saved.attachments || [], dryRun: cfg.dryRun };
+    }
+
+    case "FOLLOWUP_DONE": {
+      if (msg.sent) notify("success", `💬 Follow-up sent: ${msg.title || msg.slug || ""}`);
+      finishInFlight();
       return { ok: true };
     }
 
