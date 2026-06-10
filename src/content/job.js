@@ -218,75 +218,79 @@
     return !!input && (input.checked || input.classList.contains("selected"));
   }
 
+  // Count the skills currently selected (chips shown in the .display-selector).
+  function countSelectedSkills() {
+    return qa(S.skillChip).filter((c) => c.offsetParent !== null && chipSelected(c)).length;
+  }
+
   async function selectSkills(want = []) {
     const wants = want.map((w) => (w || "").toLowerCase().trim()).filter(Boolean);
-    const chips = qa(S.skillChip).filter((c) => c.offsetParent !== null);
 
-    // Workana pre-selects the direct matches. Count them.
-    let selected = chips.filter(chipSelected).length;
-
-    // If MORE than 5 are pre-selected (over the "up to 5" limit), trim the
-    // least-relevant extras so the form is valid for submit.
+    // Trim if Workana pre-selected MORE than 5 (over the "up to 5" limit).
+    let selected = countSelectedSkills();
     if (selected > 5) {
-      const ranked = chips
-        .filter(chipSelected)
+      const ranked = qa(S.skillChip)
+        .filter((c) => c.offsetParent !== null && chipSelected(c))
         .map((c) => ({ c, rel: wants.some((w) => textOf(c).toLowerCase().includes(w)) ? 1 : 0 }))
         .sort((a, b) => a.rel - b.rel); // least-relevant first
       for (const { c } of ranked) {
-        if (selected <= 5) break;
+        if (countSelectedSkills() <= 5) break;
         c.click(); // deselect
-        selected--;
         await sleep(150);
       }
-      return selected;
+      return countSelectedSkills();
     }
     if (selected >= 5) return selected;
 
-    // 1) Top up with UNSELECTED chips matching Claude's suggested skills
-    //    (never click a selected chip — that would deselect it).
-    for (const chip of chips) {
-      if (selected >= 5) break;
-      if (chipSelected(chip)) continue;
-      const label = textOf(chip).toLowerCase();
-      if (wants.some((w) => label.includes(w) || w.includes(label))) {
-        chip.click();
-        selected++;
-        await sleep(200);
+    // Open the available-skills dropdown (profile skills offered for this project).
+    const searchInput = document.querySelector(S.skillSearchInput);
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.click();
+      await humanDelay(400, 800);
+    }
+
+    const RESULT_SEL = ".multi-select-results .multi-select-results-item, .multi-select-results-item, li[role='option']";
+
+    // Click available skills (re-querying each time, since the list re-renders).
+    // `predicate(label)` decides which items qualify; clicked items are remembered.
+    async function pickAvailable(predicate) {
+      const clicked = new Set();
+      let guard = 0;
+      while (countSelectedSkills() < 5 && guard++ < 15) {
+        const items = qa(RESULT_SEL).filter((i) => i.offsetParent !== null && textOf(i).trim());
+        const match = items.find((i) => {
+          const t = textOf(i).toLowerCase();
+          return !clicked.has(t) && predicate(t);
+        });
+        if (!match) break;
+        clicked.add(textOf(match).toLowerCase());
+        match.click();
+        await humanDelay(350, 700);
       }
     }
 
-    // 1b) Still under 5 → fill with any remaining unselected chips (reach 5).
-    if (selected < 5) {
-      for (const chip of chips) {
-        if (selected >= 5) break;
-        if (chipSelected(chip)) continue;
-        chip.click();
-        selected++;
-        await sleep(200);
-      }
-    }
+    // 1) Relevant first (matching the job's skills), 2) then any to fill toward 5.
+    await pickAvailable((label) => wants.some((w) => label.includes(w) || w.includes(label)));
+    if (countSelectedSkills() < 5) await pickAvailable(() => true);
 
-    // 2) Still under 5 (not enough chips) → use the "Search skills" box to add more.
-    if (selected < 5) {
-      const input = document.querySelector(S.skillSearchInput);
-      if (input) {
-        for (const w of wants) {
-          if (selected >= 5) break;
-          setReactValue(input, w);
-          await humanDelay(500, 900);
-          const opt = await waitForText(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), {
-            selector: "li,[role='option'],label,div",
-            timeout: 1500,
-          });
-          if (opt) {
-            opt.click();
-            selected++;
-            await sleep(200);
-          }
+    // 3) Still under 5 → type each wanted skill to surface more profile skills.
+    if (countSelectedSkills() < 5 && searchInput) {
+      for (const w of wants) {
+        if (countSelectedSkills() >= 5) break;
+        setReactValue(searchInput, w);
+        await humanDelay(500, 900);
+        const opt = await waitForText(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), {
+          selector: RESULT_SEL + ",label,div",
+          timeout: 1500,
+        });
+        if (opt) {
+          opt.click();
+          await sleep(300);
         }
       }
     }
-    return selected;
+    return countSelectedSkills();
   }
 
   // Score a portfolio card by title match + skill overlap with the proposal.
